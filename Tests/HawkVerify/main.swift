@@ -284,6 +284,25 @@ func runAllVerifications() async {
     let bucket = await statsRecorder.getMonthlyReplay(monthKey: month)
     assertTest("Monthly aggregate bucket created", bucket != nil)
 
+    // 9. CarPlay & Library Architecture Tests
+    print("\n[9/9] Testing CarPlay & Library Architecture...")
+    let carPlayManager = CarPlaySyncManager.shared
+    let cpFavorites = await carPlayManager.fetchFavorites()
+    assertTest("CarPlaySyncManager fetchFavorites returns list", cpFavorites is [CarPlayBrowsingItem])
+
+    let cpPlaylists = await carPlayManager.fetchPlaylists()
+    assertTest("CarPlaySyncManager fetchPlaylists returns list", cpPlaylists is [CarPlayBrowsingItem])
+
+    let cpArtists = await carPlayManager.fetchArtists()
+    assertTest("CarPlaySyncManager fetchArtists returns list", cpArtists is [CarPlayBrowsingItem])
+
+    let cpQueue = await carPlayManager.fetchQueueItems()
+    assertTest("CarPlaySyncManager fetchQueueItems reflects queue", cpQueue.count == 3)
+
+    let iconPath = "Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+    let iconExists = FileManager.default.fileExists(atPath: iconPath)
+    assertTest("Official HAWK AppIcon-1024.png asset exists", iconExists)
+
     print("\n==================================================")
     print("  VERIFICATION RESULT: \(passed) PASSED, \(failed) FAILED")
     print("==================================================")
