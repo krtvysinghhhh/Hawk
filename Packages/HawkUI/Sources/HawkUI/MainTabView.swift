@@ -733,32 +733,107 @@ struct SongCardView: View {
     }
 }
 
-// MARK: - Library View
+// MARK: - Library Hub View
 struct LibraryView: View {
+    @State private var recentLibrarySongs: [Song] = []
+    private var coordinator = PlaybackCoordinator.shared
+
+    private let librarySections: [(title: String, icon: String, color: Color, destination: AnyView)] = [
+        ("Playlists", "music.note.list", Color(red: 1.0, green: 0.22, blue: 0.37), AnyView(PlaylistsView())),
+        ("Artists", "music.mic", Color(red: 0.35, green: 0.34, blue: 0.84), AnyView(ArtistsView())),
+        ("Albums", "square.stack", Color(red: 0.69, green: 0.32, blue: 0.87), AnyView(AlbumsView())),
+        ("Songs", "music.note", Color(red: 0.0, green: 0.48, blue: 1.0), AnyView(AllSongsView())),
+        ("Favourites", "heart.fill", Color(red: 1.0, green: 0.18, blue: 0.33), AnyView(FavoritesView())),
+        ("Recently Added", "clock.fill", Color(red: 1.0, green: 0.58, blue: 0.0), AnyView(RecentlyAddedView())),
+        ("Downloaded", "arrow.down.circle.fill", Color(red: 0.20, green: 0.78, blue: 0.35), AnyView(DownloadsView())),
+        ("Local Files", "folder.fill", Color(red: 1.0, green: 0.80, blue: 0.0), AnyView(LocalFilesView()))
+    ]
+
     var body: some View {
         NavigationStack {
             ZStack {
                 HawkTheme.darkBackground.ignoresSafeArea()
-                List {
-                    NavigationLink(destination: FavoritesView()) {
-                        Label("Favorite Songs", systemImage: "heart.fill")
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 22) {
+                        // Section: Navigation List
+                        VStack(spacing: 1) {
+                            ForEach(librarySections, id: \.title) { sec in
+                                NavigationLink(destination: sec.destination) {
+                                    HStack(spacing: 14) {
+                                        Image(systemName: sec.icon)
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundColor(sec.color)
+                                            .frame(width: 28, height: 28)
+
+                                        Text(sec.title)
+                                            .font(.system(size: 17, weight: .regular))
+                                            .foregroundColor(HawkTheme.textPrimary)
+
+                                        Spacer()
+
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(HawkTheme.textTertiary)
+                                    }
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 13)
+                                }
+                                .buttonStyle(.plain)
+
+                                if sec.title != librarySections.last?.title {
+                                    Divider()
+                                        .background(Color.white.opacity(0.08))
+                                        .padding(.leading, 62)
+                                }
+                            }
+                        }
+                        .background(HawkTheme.cardBackground)
+                        .cornerRadius(16)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+
+                        // Section: Recently Added 1:1 Artwork Carousel
+                        if !recentLibrarySongs.isEmpty {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("Recently Added")
+                                    .font(.system(size: 22, weight: .bold))
+                                    .foregroundColor(HawkTheme.textPrimary)
+                                    .padding(.horizontal, 20)
+
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 16) {
+                                        ForEach(recentLibrarySongs.prefix(10)) { song in
+                                            Button {
+                                                coordinator.play(song: song, context: recentLibrarySongs)
+                                            } label: {
+                                                SongCardView(song: song)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .hawkPressEffect()
+                                        }
+                                    }
+                                    .padding(.horizontal, 20)
+                                }
+                            }
+                        }
                     }
-                    NavigationLink(destination: PlaylistsView()) {
-                        Label("Playlists", systemImage: "music.note.list")
-                    }
-                    NavigationLink(destination: DownloadsView()) {
-                        Label("Downloaded Music", systemImage: "arrow.down.circle.fill")
-                    }
-                    NavigationLink(destination: LocalFilesView()) {
-                        Label("Local Audio Files", systemImage: "folder.fill")
-                    }
-                    NavigationLink(destination: SettingsView()) {
-                        Label("Settings", systemImage: "gearshape.fill")
-                    }
+                    .padding(.bottom, 110)
                 }
-                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Library")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink(destination: SettingsView()) {
+                        Image(systemName: "gearshape.fill")
+                            .foregroundColor(HawkTheme.primaryAccent)
+                    }
+                }
+            }
+            .task {
+                let all = await LibraryAggregator.shared.allLibrarySongs()
+                self.recentLibrarySongs = all
+            }
         }
     }
 }

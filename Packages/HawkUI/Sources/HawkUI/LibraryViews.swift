@@ -543,3 +543,397 @@ public struct SongRowView: View {
             )
     }
 }
+
+// MARK: - Library Aggregator Service
+public actor LibraryAggregator {
+    public static let shared = LibraryAggregator()
+
+    public func allLibrarySongs() async -> [Song] {
+        var collected: [Song] = []
+        let favs = await PlaylistStore.shared.getFavorites().songs
+        collected.append(contentsOf: favs)
+        for p in await PlaylistStore.shared.getAllPlaylists() {
+            collected.append(contentsOf: p.songs)
+        }
+        let downloads = await DownloadManager.shared.getDownloadedSongs()
+        collected.append(contentsOf: downloads)
+        let locals = await LocalLibrarySource().scanLocalTracks()
+        collected.append(contentsOf: locals)
+        return TrackDeduplicator.deduplicate(collected)
+    }
+}
+
+// MARK: - All Songs View
+public struct AllSongsView: View {
+    @State private var songs: [Song] = []
+    @State private var searchText: String = ""
+    @State private var isLoading = true
+    private var coordinator = PlaybackCoordinator.shared
+
+    public init() {}
+
+    private var filteredSongs: [Song] {
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            return songs
+        }
+        return songs.filter {
+            $0.title.localizedCaseInsensitiveContains(searchText) ||
+            $0.artist.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            if songs.isEmpty && !isLoading {
+                VStack(spacing: 12) {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 48))
+                        .foregroundColor(HawkTheme.textTertiary)
+                    Text("No Songs in Library")
+                        .font(.headline)
+                        .foregroundColor(HawkTheme.textSecondary)
+                    Text("Favorite tracks or add songs to playlists to see them here.")
+                        .font(.caption)
+                        .foregroundColor(HawkTheme.textTertiary)
+                }
+            } else {
+                List {
+                    if !songs.isEmpty {
+                        HStack(spacing: 16) {
+                            Button {
+                                if let first = filteredSongs.first {
+                                    coordinator.play(song: first, context: filteredSongs)
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "play.fill")
+                                    Text("Play All")
+                                }
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(HawkTheme.primaryAccent)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(10)
+                            }
+
+                            Button {
+                                if !filteredSongs.isEmpty {
+                                    let shuffled = filteredSongs.shuffled()
+                                    if let first = shuffled.first {
+                                        coordinator.play(song: first, context: shuffled)
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "shuffle")
+                                    Text("Shuffle")
+                                }
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(HawkTheme.primaryAccent)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(10)
+                            }
+                        }
+                        .listRowBackground(Color.clear)
+                        .padding(.vertical, 4)
+                    }
+
+                    ForEach(filteredSongs) { song in
+                        Button {
+                            coordinator.play(song: song, context: filteredSongs)
+                        } label: {
+                            SongRowView(song: song)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .navigationTitle("Songs")
+        .searchable(text: $searchText, prompt: "Search Songs")
+        .task {
+            songs = await LibraryAggregator.shared.allLibrarySongs().sorted { $0.title < $1.title }
+            isLoading = false
+        }
+    }
+}
+
+// MARK: - Artists View
+public struct ArtistsView: View {
+    @State private var artists: [(name: String, count: Int)] = []
+    @State private var isLoading = true
+
+    public init() {}
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            if artists.isEmpty && !isLoading {
+                VStack(spacing: 12) {
+                    Image(systemName: "music.mic")
+                        .font(.system(size: 48))
+                        .foregroundColor(HawkTheme.textTertiary)
+                    Text("No Artists in Library")
+                        .font(.headline)
+                        .foregroundColor(HawkTheme.textSecondary)
+                }
+            } else {
+                List(artists, id: \.name) { artist in
+                    NavigationLink(destination: ArtistDetailView(artistName: artist.name)) {
+                        HStack(spacing: 14) {
+                            ZStack {
+                                Circle()
+                                    .fill(HawkTheme.cardBackground)
+                                    .frame(width: 44, height: 44)
+                                Image(systemName: "person.fill")
+                                    .foregroundColor(HawkTheme.textSecondary)
+                            }
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(artist.name)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(HawkTheme.textPrimary)
+                                Text("\(artist.count) tracks")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(HawkTheme.textSecondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .navigationTitle("Artists")
+        .task {
+            let all = await LibraryAggregator.shared.allLibrarySongs()
+            var counts: [String: Int] = [:]
+            for s in all {
+                let name = s.artist.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty {
+                    counts[name, default: 0] += 1
+                }
+            }
+            artists = counts.map { (name: $0.key, count: $0.value) }.sorted { $0.name < $1.name }
+            isLoading = false
+        }
+    }
+}
+
+// MARK: - Artist Detail View
+public struct ArtistDetailView: View {
+    public let artistName: String
+    @State private var songs: [Song] = []
+    private var coordinator = PlaybackCoordinator.shared
+
+    public init(artistName: String) {
+        self.artistName = artistName
+    }
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            List {
+                ForEach(songs) { song in
+                    Button {
+                        coordinator.play(song: song, context: songs)
+                    } label: {
+                        SongRowView(song: song)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .scrollContentBackground(.hidden)
+        }
+        .navigationTitle(artistName)
+        .task {
+            let all = await LibraryAggregator.shared.allLibrarySongs()
+            songs = all.filter { $0.artist.localizedCaseInsensitiveContains(artistName) }
+        }
+    }
+}
+
+// MARK: - Albums View
+public struct AlbumsView: View {
+    public struct AlbumItem: Identifiable {
+        public var id: String { title }
+        public let title: String
+        public let artist: String
+        public let artworkURL: URL?
+        public let tracks: [Song]
+    }
+
+    @State private var albums: [AlbumItem] = []
+    @State private var isLoading = true
+
+    public init() {}
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            if albums.isEmpty && !isLoading {
+                VStack(spacing: 12) {
+                    Image(systemName: "square.stack")
+                        .font(.system(size: 48))
+                        .foregroundColor(HawkTheme.textTertiary)
+                    Text("No Albums in Library")
+                        .font(.headline)
+                        .foregroundColor(HawkTheme.textSecondary)
+                }
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 20) {
+                        ForEach(albums) { album in
+                            NavigationLink(destination: AlbumDetailView(album: album)) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    AsyncImage(url: album.artworkURL) { phase in
+                                        if let img = phase.image {
+                                            img.resizable().aspectRatio(contentMode: .fill)
+                                        } else {
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .fill(HawkTheme.cardBackground)
+                                                .overlay(
+                                                    Image(systemName: "square.stack")
+                                                        .foregroundColor(HawkTheme.textTertiary)
+                                                )
+                                        }
+                                    }
+                                    .frame(height: 160)
+                                    .cornerRadius(12)
+                                    .clipped()
+
+                                    Text(album.title)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(HawkTheme.textPrimary)
+                                        .lineLimit(1)
+                                    Text(album.artist)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(HawkTheme.textSecondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+        }
+        .navigationTitle("Albums")
+        .task {
+            let all = await LibraryAggregator.shared.allLibrarySongs()
+            var grouped: [String: [Song]] = [:]
+            for s in all {
+                let key = s.albumTitle ?? s.title
+                grouped[key, default: []].append(s)
+            }
+            albums = grouped.map { title, tracks in
+                AlbumItem(
+                    title: title,
+                    artist: tracks.first?.artist ?? "Various Artists",
+                    artworkURL: tracks.first?.artworkURL,
+                    tracks: tracks
+                )
+            }.sorted { $0.title < $1.title }
+            isLoading = false
+        }
+    }
+}
+
+// MARK: - Album Detail View
+public struct AlbumDetailView: View {
+    public let album: AlbumsView.AlbumItem
+    private var coordinator = PlaybackCoordinator.shared
+
+    public init(album: AlbumsView.AlbumItem) {
+        self.album = album
+    }
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            List {
+                Section {
+                    ForEach(album.tracks) { song in
+                        Button {
+                            coordinator.play(song: song, context: album.tracks)
+                        } label: {
+                            SongRowView(song: song)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    HStack(spacing: 16) {
+                        AsyncImage(url: album.artworkURL) { phase in
+                            if let img = phase.image {
+                                img.resizable().aspectRatio(contentMode: .fill)
+                            } else {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(HawkTheme.cardBackground)
+                            }
+                        }
+                        .frame(width: 80, height: 80)
+                        .cornerRadius(10)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(album.title)
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(HawkTheme.textPrimary)
+                            Text(album.artist)
+                                .font(.system(size: 14))
+                                .foregroundColor(HawkTheme.textSecondary)
+                            Text("\(album.tracks.count) tracks")
+                                .font(.caption)
+                                .foregroundColor(HawkTheme.textTertiary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .scrollContentBackground(.hidden)
+        }
+        .navigationTitle(album.title)
+    }
+}
+
+// MARK: - Recently Added View
+public struct RecentlyAddedView: View {
+    @State private var recentSongs: [Song] = []
+    private var coordinator = PlaybackCoordinator.shared
+
+    public init() {}
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            if recentSongs.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 48))
+                        .foregroundColor(HawkTheme.textTertiary)
+                    Text("No Recently Added Songs")
+                        .font(.headline)
+                        .foregroundColor(HawkTheme.textSecondary)
+                }
+            } else {
+                List(recentSongs) { song in
+                    Button {
+                        coordinator.play(song: song, context: recentSongs)
+                    } label: {
+                        SongRowView(song: song)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .navigationTitle("Recently Added")
+        .task {
+            recentSongs = await LibraryAggregator.shared.allLibrarySongs()
+        }
+    }
+}
