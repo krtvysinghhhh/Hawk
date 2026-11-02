@@ -7,10 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1975010B137E60916C9AC7BD /* HawkCarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A922C8B8E775C7A3959ADDD /* HawkCarPlaySceneDelegate.swift */; };
 		1EE7025C71B8414DBC6002DE /* HawkSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 2E66A81506B5CF8F21DD4237 /* HawkSecurity */; };
 		2E0AA1EBCD28BB2C097774EA /* HawkLyrics in Frameworks */ = {isa = PBXBuildFile; productRef = D4EC4407BB041619F7664EA7 /* HawkLyrics */; };
 		3CDE5AA3E2203A18D5258FA3 /* HawkSources in Frameworks */ = {isa = PBXBuildFile; productRef = FABBD697E6363E26CE1BA7EA /* HawkSources */; };
 		5790004E3308CBD60C4AF0F5 /* HawkNetworking in Frameworks */ = {isa = PBXBuildFile; productRef = 569204E2EBC52B205F963C58 /* HawkNetworking */; };
+		61F57933F3BFEE2EEED2C893 /* hawk-logo.png in Resources */ = {isa = PBXBuildFile; fileRef = 71C2D05776C79CB810ABB5AE /* hawk-logo.png */; };
 		69BEE4C02B29025AA3AAD4BA /* HawkPlayback in Frameworks */ = {isa = PBXBuildFile; productRef = 1EABF8989A7BE73930BB6686 /* HawkPlayback */; };
 		81D56230A2D810F97629D8A8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE84E6D74E8019C68F67C559 /* Assets.xcassets */; };
 		8D121DFA972DF077FA27EBBA /* HawkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD86C2949930F5B1FC77DD02 /* HawkApp.swift */; };
@@ -22,6 +24,8 @@
 /* Begin PBXFileReference section */
 		004AFC87EAF7C4F734697A82 /* HAWK */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HAWK; path = .; sourceTree = SOURCE_ROOT; };
 		3168429F7F832107F60CCC95 /* HAWK.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = HAWK.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A922C8B8E775C7A3959ADDD /* HawkCarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HawkCarPlaySceneDelegate.swift; sourceTree = "<group>"; };
+		71C2D05776C79CB810ABB5AE /* hawk-logo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "hawk-logo.png"; sourceTree = "<group>"; };
 		AD86C2949930F5B1FC77DD02 /* HawkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HawkApp.swift; sourceTree = "<group>"; };
 		CE84E6D74E8019C68F67C559 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -49,6 +53,7 @@
 			isa = PBXGroup;
 			children = (
 				CE84E6D74E8019C68F67C559 /* Assets.xcassets */,
+				71C2D05776C79CB810ABB5AE /* hawk-logo.png */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -67,6 +72,7 @@
 			isa = PBXGroup;
 			children = (
 				AD86C2949930F5B1FC77DD02 /* HawkApp.swift */,
+				5A922C8B8E775C7A3959ADDD /* HawkCarPlaySceneDelegate.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -156,6 +162,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				81D56230A2D810F97629D8A8 /* Assets.xcassets in Resources */,
+				61F57933F3BFEE2EEED2C893 /* hawk-logo.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -167,6 +174,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8D121DFA972DF077FA27EBBA /* HawkApp.swift in Sources */,
+				1975010B137E60916C9AC7BD /* HawkCarPlaySceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
