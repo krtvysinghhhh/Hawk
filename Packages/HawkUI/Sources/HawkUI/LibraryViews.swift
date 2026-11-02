@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import HawkCore
 import HawkPlayback
 import HawkSources
@@ -8,6 +9,7 @@ import HawkStats
 public struct FavoritesView: View {
     @State private var favorites: Playlist = Playlist.favoritesPlaylist()
     @State private var isLoading = true
+    private var coordinator = PlaybackCoordinator.shared
 
     public init() {}
 
@@ -31,7 +33,12 @@ public struct FavoritesView: View {
             } else {
                 List {
                     ForEach(favorites.songs) { song in
-                        SongRowView(song: song)
+                        Button {
+                            coordinator.play(song: song, context: favorites.songs)
+                        } label: {
+                            SongRowView(song: song)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .onDelete { indexSet in
                         Task {
@@ -104,7 +111,7 @@ public struct PlaylistsView: View {
         }
         .navigationTitle("Playlists")
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     showCreateSheet = true
                 } label: {
@@ -124,7 +131,7 @@ public struct PlaylistsView: View {
                             .cornerRadius(10)
                             .foregroundColor(HawkTheme.textPrimary)
                             .padding(.horizontal)
-                        
+
                         Button {
                             guard !newPlaylistTitle.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                             Task {
@@ -143,13 +150,15 @@ public struct PlaylistsView: View {
                                 .cornerRadius(12)
                         }
                         .padding(.horizontal)
-                        
+
                         Spacer()
                     }
                     .padding(.top, 30)
                 }
                 .navigationTitle("New Playlist")
+#if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+#endif
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { showCreateSheet = false }
@@ -168,6 +177,7 @@ public struct PlaylistsView: View {
 // MARK: - Playlist Detail View
 public struct PlaylistDetailView: View {
     public let playlist: Playlist
+    private var coordinator = PlaybackCoordinator.shared
 
     public init(playlist: Playlist) {
         self.playlist = playlist
@@ -187,7 +197,12 @@ public struct PlaylistDetailView: View {
                 }
             } else {
                 List(playlist.songs) { song in
-                    SongRowView(song: song)
+                    Button {
+                        coordinator.play(song: song, context: playlist.songs)
+                    } label: {
+                        SongRowView(song: song)
+                    }
+                    .buttonStyle(.plain)
                 }
                 .scrollContentBackground(.hidden)
             }
@@ -200,6 +215,7 @@ public struct PlaylistDetailView: View {
 public struct DownloadsView: View {
     @State private var downloadedSongs: [Song] = []
     @State private var totalSizeMB: Double = 0.0
+    private var coordinator = PlaybackCoordinator.shared
 
     public init() {}
 
@@ -244,7 +260,12 @@ public struct DownloadsView: View {
                     Spacer()
                 } else {
                     List(downloadedSongs) { song in
-                        SongRowView(song: song, showOfflineBadge: true)
+                        Button {
+                            coordinator.play(song: song, context: downloadedSongs)
+                        } label: {
+                            SongRowView(song: song, showOfflineBadge: true)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .scrollContentBackground(.hidden)
                 }
@@ -259,10 +280,108 @@ public struct DownloadsView: View {
     }
 }
 
+// MARK: - Local Files View
+public struct LocalFilesView: View {
+    @State private var localTracks: [Song] = []
+    @State private var showFilePicker = false
+    @State private var isLoading = true
+    private let localSource = LocalLibrarySource()
+    private var coordinator = PlaybackCoordinator.shared
+
+    public init() {}
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            if localTracks.isEmpty && !isLoading {
+                VStack(spacing: 16) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 48))
+                        .foregroundColor(HawkTheme.textTertiary)
+                    Text("No Local Audio Files")
+                        .font(.headline)
+                        .foregroundColor(HawkTheme.textSecondary)
+                    Text("Import MP3, FLAC, or M4A audio files from your Files app or iCloud Drive.")
+                        .font(.caption)
+                        .foregroundColor(HawkTheme.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+
+                    Button {
+                        showFilePicker = true
+                    } label: {
+                        Label("Import Audio Files", systemImage: "square.and.arrow.down")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .background(HawkTheme.primaryAccent)
+                            .cornerRadius(10)
+                    }
+                }
+            } else {
+                List {
+                    ForEach(localTracks) { song in
+                        Button {
+                            coordinator.play(song: song, context: localTracks)
+                        } label: {
+                            SongRowView(song: song)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .navigationTitle("Local Files")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showFilePicker = true
+                } label: {
+                    Image(systemName: "plus")
+                        .foregroundColor(HawkTheme.primaryAccent)
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showFilePicker,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                let localDir = docs.appendingPathComponent("LocalMusic", isDirectory: true)
+                try? FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+
+                for url in urls {
+                    guard url.startAccessingSecurityScopedResource() else { continue }
+                    defer { url.stopAccessingSecurityScopedResource() }
+                    let dest = localDir.appendingPathComponent(url.lastPathComponent)
+                    try? FileManager.default.removeItem(at: dest)
+                    try? FileManager.default.copyItem(at: url, to: dest)
+                }
+                Task {
+                    localTracks = await localSource.scanLocalTracks()
+                }
+            case .failure(let error):
+                print("Failed to import files: \(error)")
+            }
+        }
+        .task {
+            localTracks = await localSource.scanLocalTracks()
+            isLoading = false
+        }
+    }
+}
+
 // MARK: - Settings View
 public struct SettingsView: View {
     @State private var selectedQuality: AudioQuality = .high
     @State private var selectedPreset: EqualizerPreset = .flat
+    @State private var cacheSizeMB: Double = 0.0
+    @State private var showCacheClearedAlert = false
 
     public init() {}
 
@@ -295,7 +414,29 @@ public struct SettingsView: View {
                     }
                 }
 
+                Section(header: Text("Storage & Cache").foregroundColor(HawkTheme.textSecondary)) {
+                    HStack {
+                        Text("Network Cache")
+                        Spacer()
+                        Text(String(format: "%.1f MB", cacheSizeMB))
+                            .foregroundColor(HawkTheme.textSecondary)
+                    }
+
+                    Button("Clear Network Cache") {
+                        URLCache.shared.removeAllCachedResponses()
+                        updateCacheSize()
+                        showCacheClearedAlert = true
+                    }
+                    .foregroundColor(HawkTheme.primaryAccent)
+                }
+
                 Section(header: Text("About HAWK").foregroundColor(HawkTheme.textSecondary)) {
+                    HStack {
+                        Text("Product")
+                        Spacer()
+                        Text("HAWK Native iOS")
+                            .foregroundColor(HawkTheme.textSecondary)
+                    }
                     HStack {
                         Text("Version")
                         Spacer()
@@ -303,15 +444,15 @@ public struct SettingsView: View {
                             .foregroundColor(HawkTheme.textSecondary)
                     }
                     HStack {
-                        Text("Engine")
+                        Text("Audio Subsystem")
                         Spacer()
                         Text("Native AVFoundation")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
                     HStack {
-                        Text("Architecture")
+                        Text("License")
                         Spacer()
-                        Text("Swift 6 Strict Concurrency")
+                        Text("GPLv3 / Independent")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
                 }
@@ -319,10 +460,23 @@ public struct SettingsView: View {
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("Settings")
+        .alert("Cache Cleared", isPresented: $showCacheClearedAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Temporary audio and network caches have been cleared.")
+        }
+        .task {
+            updateCacheSize()
+        }
+    }
+
+    private func updateCacheSize() {
+        let currentBytes = URLCache.shared.currentDiskUsage
+        cacheSizeMB = Double(currentBytes) / (1024 * 1024)
     }
 }
 
-// MARK: - Song Row Component
+// MARK: - Song Row Component with Live Artwork
 public struct SongRowView: View {
     public let song: Song
     public var showOfflineBadge: Bool = false
@@ -334,10 +488,22 @@ public struct SongRowView: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(HawkTheme.cardBackground)
-                .frame(width: 44, height: 44)
-                .overlay(Image(systemName: "music.note").foregroundColor(.white.opacity(0.3)))
+            if let artworkURL = song.artworkURL {
+                AsyncImage(url: artworkURL) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        rowPlaceholder
+                    }
+                }
+                .frame(width: 46, height: 46)
+                .cornerRadius(8)
+                .clipped()
+            } else {
+                rowPlaceholder
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title)
@@ -364,5 +530,16 @@ public struct SongRowView: View {
                 .foregroundColor(HawkTheme.textTertiary)
         }
         .padding(.vertical, 2)
+    }
+
+    private var rowPlaceholder: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(HawkTheme.cardBackground)
+            .frame(width: 46, height: 46)
+            .overlay(
+                Image(systemName: "music.note")
+                    .font(.system(size: 18))
+                    .foregroundColor(.white.opacity(0.3))
+            )
     }
 }

@@ -96,6 +96,20 @@ func runAllVerifications() async {
     let localSource = LocalLibrarySource()
     assertTest("LocalLibrarySource registered", localSource.sourceId == "local")
 
+    let saavnSource = JioSaavnSource()
+    let saavnResults = (try? await saavnSource.search(query: "Tum Hi Ho")) ?? []
+    assertTest("JioSaavn live search returns results", !saavnResults.isEmpty)
+    if let first = saavnResults.first {
+        print("  -> JioSaavn top match: '\(first.title)' by '\(first.artist)' (ID: \(first.id))")
+    }
+
+    let ytSource = YouTubeSource()
+    let ytResults = (try? await ytSource.search(query: "Starboy")) ?? []
+    print("  -> YouTube search returned \(ytResults.count) results")
+    if let firstYt = ytResults.first {
+        print("  -> YouTube top match: '\(firstYt.title)' by '\(firstYt.artist)' (ID: \(firstYt.id))")
+    }
+
     // 4. SpotifyImporter Tests
     print("\n[4/8] Testing Spotify Importer...")
     let parsedUrlId = SpotifyImporter.extractPlaylistId(from: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=123")

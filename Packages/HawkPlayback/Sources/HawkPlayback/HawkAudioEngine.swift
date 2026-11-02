@@ -17,7 +17,14 @@ public actor HawkAudioEngine {
     public private(set) var playbackSpeed: Float = 1.0
 
     private var timeObserverToken: Any?
+    private var endObserverToken: Any?
     private var crossfadeTask: Task<Void, Never>?
+
+    public var onTrackFinished: (@Sendable () async -> Void)?
+
+    public func setOnTrackFinished(_ handler: @escaping @Sendable () async -> Void) {
+        self.onTrackFinished = handler
+    }
 
     public init() {
         self.playerA = AVPlayer()
@@ -54,6 +61,28 @@ public actor HawkAudioEngine {
             activePlayer.play()
             playbackState = .playing(song)
             updateNowPlaying(song: song)
+        }
+        observeItemEnd(item: playerItem)
+    }
+
+    private func observeItemEnd(item: AVPlayerItem) {
+        if let token = endObserverToken {
+            NotificationCenter.default.removeObserver(token)
+        }
+        endObserverToken = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { _ in
+            Task {
+                await HawkAudioEngine.shared.handleTrackEnded()
+            }
+        }
+    }
+
+    public func handleTrackEnded() async {
+        if let onTrackFinished {
+            await onTrackFinished()
         }
     }
 
@@ -266,6 +295,20 @@ public actor HawkAudioEngine {
         info[MPNowPlayingInfoPropertyPlaybackRate] = Double(playbackSpeed)
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+
+        #if canImport(UIKit)
+        if let artworkURL = song.artworkURL {
+            Task {
+                if let (data, _) = try? await URLSession.shared.data(from: artworkURL),
+                   let image = UIImage(data: data) {
+                    var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                    let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                    currentInfo[MPMediaItemPropertyArtwork] = artwork
+                    MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo
+                }
+            }
+        }
+        #endif
     }
 
     private func updateNowPlayingPlaybackRate(_ rate: Double) {

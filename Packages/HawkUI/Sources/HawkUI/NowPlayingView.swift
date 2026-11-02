@@ -18,6 +18,7 @@ public struct NowPlayingView: View {
     public let onSeek: (TimeInterval) -> Void
     public let onDismiss: () -> Void
 
+    @State private var coordinator = PlaybackCoordinator.shared
     @State private var showLyrics = false
     @State private var showQueue = false
     @State private var isScrubbing = false
@@ -49,7 +50,7 @@ public struct NowPlayingView: View {
         ZStack {
             ArtworkMeshGradient()
 
-            VStack(spacing: 24) {
+            VStack(spacing: 20) {
                 // Dismiss Grabber & Header
                 HStack {
                     Button(action: onDismiss) {
@@ -76,9 +77,18 @@ public struct NowPlayingView: View {
                     Spacer()
 
                     Menu {
-                        Button("View Artist", action: {})
-                        Button("Equalizer", action: {})
-                        Button("Share Track", action: {})
+                        Button {
+                            coordinator.toggleFavorite()
+                        } label: {
+                            Label(coordinator.isFavorite ? "Remove from Favorites" : "Favorite Song",
+                                  systemImage: coordinator.isFavorite ? "heart.slash" : "heart")
+                        }
+
+                        Button {
+                            showQueue = true
+                        } label: {
+                            Label("View Queue", systemImage: "list.bullet")
+                        }
                     } label: {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 18, weight: .semibold))
@@ -87,7 +97,7 @@ public struct NowPlayingView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 16)
+                .padding(.top, 14)
 
                 Spacer()
 
@@ -101,7 +111,11 @@ public struct NowPlayingView: View {
                             image.resizable().scaledToFill()
                         } else {
                             Rectangle().fill(HawkTheme.cardBackground)
-                                .overlay(Image(systemName: "music.note").font(.system(size: 80)).foregroundColor(.white.opacity(0.3)))
+                                .overlay(
+                                    Image(systemName: "music.note")
+                                        .font(.system(size: 80))
+                                        .foregroundColor(.white.opacity(0.3))
+                                )
                         }
                     }
                     .frame(width: 320, height: 320)
@@ -128,10 +142,12 @@ public struct NowPlayingView: View {
 
                     Spacer()
 
-                    Button(action: {}) {
-                        Image(systemName: song.isLiked ? "heart.fill" : "heart")
+                    Button {
+                        coordinator.toggleFavorite()
+                    } label: {
+                        Image(systemName: coordinator.isFavorite ? "heart.fill" : "heart")
                             .font(.system(size: 24))
-                            .foregroundColor(song.isLiked ? HawkTheme.primaryAccent : HawkTheme.textSecondary)
+                            .foregroundColor(coordinator.isFavorite ? HawkTheme.primaryAccent : HawkTheme.textSecondary)
                     }
                     .accessibilityLabel("Favorite")
                 }
@@ -171,8 +187,17 @@ public struct NowPlayingView: View {
                 }
                 .padding(.horizontal, 28)
 
-                // Playback Transport Controls
-                HStack(spacing: 40) {
+                // Playback Transport Controls (Shuffle, Prev, Play/Pause, Next, Repeat)
+                HStack(spacing: 28) {
+                    Button {
+                        coordinator.toggleShuffle()
+                    } label: {
+                        Image(systemName: "shuffle")
+                            .font(.system(size: 20))
+                            .foregroundColor(coordinator.isShuffleActive ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
+                    }
+                    .accessibilityLabel("Shuffle")
+
                     Button(action: onPrevious) {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 28))
@@ -201,14 +226,23 @@ public struct NowPlayingView: View {
                             .foregroundColor(HawkTheme.textPrimary)
                     }
                     .accessibilityLabel("Next Track")
+
+                    Button {
+                        coordinator.toggleRepeat()
+                    } label: {
+                        Image(systemName: repeatIconName)
+                            .font(.system(size: 20))
+                            .foregroundColor(coordinator.repeatMode != .off ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
+                    }
+                    .accessibilityLabel("Repeat")
                 }
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
 
                 // Bottom Quick Action Bar (Lyrics, AirPlay, Queue)
-                HStack(spacing: 36) {
+                HStack(spacing: 40) {
                     Button(action: { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showLyrics.toggle() } }) {
                         Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
-                            .font(.system(size: 20))
+                            .font(.system(size: 22))
                             .foregroundColor(showLyrics ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
                     }
                     .accessibilityLabel("Toggle Lyrics")
@@ -218,7 +252,7 @@ public struct NowPlayingView: View {
 
                     Button(action: { showQueue.toggle() }) {
                         Image(systemName: "list.bullet")
-                            .font(.system(size: 20))
+                            .font(.system(size: 22))
                             .foregroundColor(HawkTheme.textTertiary)
                     }
                     .accessibilityLabel("Playback Queue")
@@ -230,7 +264,17 @@ public struct NowPlayingView: View {
             QueueSheetView()
         }
     }
+
+    private var repeatIconName: String {
+        switch coordinator.repeatMode {
+        case .one: return "repeat.1"
+        default: return "repeat"
+        }
+    }
 }
+
+#if os(iOS)
+import UIKit
 
 /// AirPlay route picker button.
 struct AirPlayButton: UIViewRepresentable {
@@ -243,30 +287,54 @@ struct AirPlayButton: UIViewRepresentable {
     }
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
+#else
+struct AirPlayButton: View {
+    var body: some View {
+        Image(systemName: "airplayaudio")
+            .foregroundColor(HawkTheme.textTertiary)
+    }
+}
+#endif
 
-/// Embedded synchronized lyrics panel.
+/// Embedded synchronized lyrics panel with auto-scroll and line highlighting.
 struct LyricsContainerView: View {
     let song: Song
     let currentTime: TimeInterval
     @State private var lyrics: [LyricLine] = []
+    @State private var isLoading = true
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
-                    if lyrics.isEmpty {
-                        Text("Searching for synchronized lyrics...")
-                            .font(.system(size: 16))
-                            .foregroundColor(HawkTheme.textTertiary)
-                            .padding(.top, 40)
+                    if isLoading {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .tint(HawkTheme.primaryAccent)
+                            Text("Fetching synchronized lyrics...")
+                                .font(.system(size: 15))
+                                .foregroundColor(HawkTheme.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 60)
+                    } else if lyrics.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "quote.bubble")
+                                .font(.system(size: 44))
+                                .foregroundColor(HawkTheme.textTertiary)
+                            Text("No synchronized lyrics found")
+                                .font(.headline)
+                                .foregroundColor(HawkTheme.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 60)
                     } else {
                         ForEach(lyrics) { line in
-                            let isActive = currentTime >= line.timestamp
+                            let isActive = currentActiveLineId == line.id
                             Text(line.text)
                                 .font(.system(size: 24, weight: isActive ? .bold : .medium))
                                 .foregroundColor(isActive ? HawkTheme.textPrimary : HawkTheme.textTertiary.opacity(0.4))
-                                .blur(radius: isActive ? 0 : 0.4)
-                                .scaleEffect(isActive ? 1.02 : 1.0, anchor: .leading)
+                                .scaleEffect(isActive ? 1.03 : 1.0, anchor: .leading)
                                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isActive)
                                 .id(line.id)
                         }
@@ -277,40 +345,82 @@ struct LyricsContainerView: View {
             }
             .task {
                 lyrics = (try? await LyricsEngine.shared.fetchLyrics(for: song)) ?? []
+                isLoading = false
+            }
+            .onChange(of: currentActiveLineId) { _, newId in
+                if let newId {
+                    withAnimation {
+                        proxy.scrollTo(newId, anchor: .center)
+                    }
+                }
             }
         }
     }
+
+    private var currentActiveLineId: String? {
+        lyrics.last(where: { currentTime >= $0.timestamp })?.id
+    }
 }
 
-/// Queue sheet displaying 3-tier queue.
+/// Queue sheet displaying real tracks from PlaybackCoordinator.
 struct QueueSheetView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var coordinator = PlaybackCoordinator.shared
 
     var body: some View {
         NavigationStack {
             ZStack {
                 HawkTheme.darkBackground.ignoresSafeArea()
 
-                VStack {
+                if coordinator.queue.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 48))
+                            .foregroundColor(HawkTheme.textTertiary)
+                        Text("Queue is Empty")
+                            .font(.headline)
+                            .foregroundColor(HawkTheme.textSecondary)
+                    }
+                } else {
                     List {
-                        Section("Up Next") {
-                            Text("User Queued Songs")
-                                .foregroundColor(HawkTheme.textSecondary)
+                        ForEach(coordinator.queue) { song in
+                            HStack(spacing: 12) {
+                                if song.id == coordinator.currentSong?.id {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .foregroundColor(HawkTheme.primaryAccent)
+                                        .font(.caption)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(song.title)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundColor(HawkTheme.textPrimary)
+                                        .lineLimit(1)
+                                    Text(song.artist)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(HawkTheme.textSecondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Text(song.formattedDuration)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundColor(HawkTheme.textTertiary)
+                            }
+                            .padding(.vertical, 2)
                         }
-                        Section("Context (Album/Playlist)") {
-                            Text("Contextual Songs")
-                                .foregroundColor(HawkTheme.textSecondary)
-                        }
-                        Section("Autoplay") {
-                            Text("Similar Tracks")
-                                .foregroundColor(HawkTheme.textSecondary)
+                        .onDelete { indexSet in
+                            for index in indexSet {
+                                let song = coordinator.queue[index]
+                                coordinator.removeFromQueue(entryId: song.queueEntryId)
+                            }
                         }
                     }
                     .scrollContentBackground(.hidden)
                 }
             }
             .navigationTitle("Playback Queue")
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+#endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
