@@ -66,12 +66,21 @@ To transition from module design/testing to full iOS compilation and `.ipa` gene
 
 ---
 
-## 5. Deployment Target Recommendation
+## 5. Deployment Target & Connected Device Assessment
 
-- **Target Device:** iPhone 12 (A14 Bionic, 4 GB RAM, 6.1" Super Retina XDR OLED).
+### 5.1 Physical Target Device (Verified via usbmuxd & lockdownd)
+- **Device Name:** `Kartavya’s iPhone`
+- **Product Model:** `iPhone 12` (`ProductType: iPhone13,2`, `HardwareModel: D53gAP`)
+- **Processor & Architecture:** Apple A14 Bionic (`arm64e`, Chip ID: `33025`)
+- **Installed OS:** `iOS 27.2` (Build `24B119`)
+- **Unique Device ID (UDID):** `00008101-001E542A3EE2001E`
+- **ECID:** `8536789721677854`
+- **Connection Interface:** High-Speed USB Lightning (`480 Mbps`, Port Location: `17825792`)
+- **Lockdown / Pairing State:** Paired, trusted, authenticated (`com.apple.mobile.lockdown` Protocol Version 2 active)
+
+### 5.2 Deployment Target
 - **Minimum Deployment Target:** **iOS 17.0**
-  - Rationale: iPhone 12 supports iOS 17 and iOS 18 smoothly. iOS 17 provides modern SwiftUI APIs (`Observable`, `ContentUnavailableView`, keyframe animations), AVFoundation improvements, Swift 6 concurrency interoperability, and avoids deprecations.
-- **Maximum / Base SDK:** **iOS 18.x** (when Xcode 16 is active).
+- **Maximum / Base SDK:** **iOS 18.x / 27.x** (compatible with target device `iOS 27.2`)
 
 ---
 

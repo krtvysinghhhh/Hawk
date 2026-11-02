@@ -18,7 +18,8 @@ In strict accordance with Rule 14 (*"Never claim that a signed IPA is verified u
 | **Xcode Application Bundle**| **BLOCKED BY HOST ENVIRONMENT** | Full `Xcode.app` is not currently installed on the host machine. |
 | **IPA Exported on Disk** | **PENDING XCODE INSTALLATION** | Blocked pending installation of Xcode from Mac App Store. |
 | **Code Signing Validated** | **PENDING XCODE INSTALLATION** | Ready for AltServer automatic signing upon IPA export. |
-| **Physical Device Runtime** | **NOT VERIFIED** | Physical iPhone 12 testing will be conducted once sideloaded via AltStore. |
+| **Physical Device Connected** | **VERIFIED (ONLINE)** | `Kartavya’s iPhone` (iPhone 12 / `iPhone13,2`, iOS 27.2, UDID: `00008101-001E542A3EE2001E`) connected and paired via USB. |
+| **Physical Device Runtime** | **PENDING IPA EXPORT** | Sideloading via AltStore ready as soon as Xcode completes export. |
 
 ---
 
