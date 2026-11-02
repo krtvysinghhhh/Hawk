@@ -25,8 +25,8 @@ func runAllVerifications() async {
         }
     }
 
-    // 1. HawkCore Domain Tests
-    print("\n[1/7] Testing HawkCore Domain Models...")
+    // 1. HawkCore Domain & PlaylistStore Tests
+    print("\n[1/8] Testing HawkCore Domain & PlaylistStore...")
     let song = Song(
         id: "vid_test_101",
         title: "Starboy",
@@ -40,8 +40,22 @@ func runAllVerifications() async {
     assertTest("Queue tier mutation immutability", queuedSong.queueTier == .userQueue && queuedSong.id == song.id)
     assertTest("Audio quality ceilings", AudioQuality.high.maxKbps == 320 && AudioQuality.lossless.maxKbps == Int.max)
 
+    let tempPlaylistURL = FileManager.default.temporaryDirectory.appendingPathComponent("TestPlaylists_\(UUID().uuidString).json")
+    let playlistStore = PlaylistStore(storageURL: tempPlaylistURL)
+    let created = await playlistStore.createPlaylist(title: "Synthwave Vibes")
+    assertTest("PlaylistStore creates custom playlist", created.title == "Synthwave Vibes")
+
+    await playlistStore.addSong(to: created.id, song: song)
+    let fetched = await playlistStore.getPlaylist(id: created.id)
+    assertTest("Song added to playlist", fetched?.songs.count == 1 && fetched?.songs.first?.id == song.id)
+
+    let isFav = await playlistStore.toggleFavorite(song: song)
+    assertTest("PlaylistStore toggleFavorite adds to Favorites", isFav == true)
+    let favCheck = await playlistStore.isFavorite(songId: song.id)
+    assertTest("PlaylistStore isFavorite verified", favCheck == true)
+
     // 2. HawkSecurity & Crypto Tests
-    print("\n[2/7] Testing HawkSecurity & Crypto...")
+    print("\n[2/8] Testing HawkSecurity & Crypto...")
     let sapisidHash = CryptoUtils.generateSapisidHash(
         sapisid: "demo_sapisid",
         origin: "https://music.youtube.com",
@@ -58,7 +72,7 @@ func runAllVerifications() async {
     assertTest("Keychain store save and read", retrieved == "secret_value_123")
 
     // 3. HawkSources & Track Matcher Tests
-    print("\n[3/7] Testing HawkSources & Matcher...")
+    print("\n[3/8] Testing HawkSources & Matcher...")
     let exactScore = TrackMatcher.matchScore(
         titleA: "Blinding Lights",
         artistA: "The Weeknd",
@@ -82,8 +96,25 @@ func runAllVerifications() async {
     let localSource = LocalLibrarySource()
     assertTest("LocalLibrarySource registered", localSource.sourceId == "local")
 
-    // 4. HawkPlayback & Multi-Tier Queue Tests
-    print("\n[4/7] Testing HawkPlayback 3-Tier Queue Engine...")
+    // 4. SpotifyImporter Tests
+    print("\n[4/8] Testing Spotify Importer...")
+    let parsedUrlId = SpotifyImporter.extractPlaylistId(from: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=123")
+    assertTest("Spotify URL playlist ID extraction", parsedUrlId == "37i9dQZF1DXcBWIGoYBM5M")
+
+    let parsedUriId = SpotifyImporter.extractPlaylistId(from: "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")
+    assertTest("Spotify URI playlist ID extraction", parsedUriId == "37i9dQZF1DXcBWIGoYBM5M")
+
+    // 5. DownloadManager Tests
+    print("\n[5/8] Testing DownloadManager...")
+    let tempDownloadDir = FileManager.default.temporaryDirectory.appendingPathComponent("HawkVerifyDL_\(UUID().uuidString)")
+    let downloadManager = DownloadManager(downloadsDirectory: tempDownloadDir)
+    let initialDLCount = await downloadManager.getDownloadedSongs().count
+    assertTest("DownloadManager initializes with 0 downloads", initialDLCount == 0)
+    let notDL = await downloadManager.isDownloaded(songId: "non_existent_123")
+    assertTest("DownloadManager isDownloaded false for non-existent", notDL == false)
+
+    // 6. HawkPlayback & Multi-Tier Queue Tests
+    print("\n[6/8] Testing HawkPlayback 3-Tier Queue Engine...")
     let queue = QueueManager.shared
     await queue.clearQueue()
 
@@ -102,15 +133,13 @@ func runAllVerifications() async {
     let nextTrack = await queue.next()
     assertTest("Queue next() navigation advances correctly", nextTrack?.id == "c1")
 
-    // 5. Equalizer Presets Tests
-    print("\n[5/7] Testing Equalizer Presets...")
     let eq = EqualizerManager.shared
     eq.applyPreset(.bassBooster)
     assertTest("Equalizer preset Bass Booster loaded", eq.currentPreset.name == "Bass Booster")
     assertTest("Equalizer low-band gain boosted (+6dB)", eq.customGains[0] == 6.0)
 
-    // 6. HawkLyrics & LRC Parser Tests
-    print("\n[6/7] Testing HawkLyrics Engine...")
+    // 7. HawkLyrics & LRC Parser Tests
+    print("\n[7/8] Testing HawkLyrics Engine...")
     let sampleLrc = """
     [00:15.50]Hello from HAWK
     [01:02.00]Synchronized Apple Music lyrics
@@ -121,15 +150,15 @@ func runAllVerifications() async {
     assertTest("LRC line 0 timestamp (15.5s)", abs(parsedLyrics[0].timestamp - 15.5) < 0.01)
     assertTest("LRC line 0 text match", parsedLyrics[0].text == "Hello from HAWK")
 
-    // 7. HawkStats Listening Recorder Tests
-    print("\n[7/7] Testing HawkStats Wall-Clock Recorder...")
+    // 8. HawkStats Listening Recorder Tests
+    print("\n[8/8] Testing HawkStats Wall-Clock Recorder...")
     let statsDir = FileManager.default.temporaryDirectory.appendingPathComponent("HawkVerifyStats_\(UUID().uuidString)")
     let statsRecorder = ListeningStatsRecorder(storageDirectory: statsDir)
 
-    // Test playback sampling with two ticks
+    // Two ticks to record interval
     let testPlaySong = Song(id: "stat_track_1", title: "Song One", artist: "Artist One", duration: 100)
     await statsRecorder.onSample(song: testPlaySong, isPlaying: true)
-    try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s tick interval
+    try? await Task.sleep(nanoseconds: 100_000_000)
     await statsRecorder.onSample(song: testPlaySong, isPlaying: true)
 
     let formatter = DateFormatter()

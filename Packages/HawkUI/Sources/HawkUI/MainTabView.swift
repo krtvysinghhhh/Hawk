@@ -162,22 +162,19 @@ struct LibraryView: View {
             ZStack {
                 HawkTheme.darkBackground.ignoresSafeArea()
                 List {
-                    NavigationLink(destination: Text("Favorites")) {
+                    NavigationLink(destination: FavoritesView()) {
                         Label("Favorite Songs", systemImage: "heart.fill")
                     }
-                    NavigationLink(destination: Text("Playlists")) {
+                    NavigationLink(destination: PlaylistsView()) {
                         Label("Playlists", systemImage: "music.note.list")
                     }
-                    NavigationLink(destination: Text("Downloaded Music")) {
-                        Label("Downloads", systemImage: "arrow.down.circle.fill")
+                    NavigationLink(destination: DownloadsView()) {
+                        Label("Downloaded Music", systemImage: "arrow.down.circle.fill")
                     }
-                    NavigationLink(destination: Text("Local Audio Files")) {
+                    NavigationLink(destination: Text("Local Audio Files").navigationTitle("Local Files")) {
                         Label("Local Files", systemImage: "folder.fill")
                     }
-                    NavigationLink(destination: Text("Listening Replay")) {
-                        Label("Replay & Statistics", systemImage: "chart.bar.xaxis")
-                    }
-                    NavigationLink(destination: Text("Settings")) {
+                    NavigationLink(destination: SettingsView()) {
                         Label("Settings", systemImage: "gearshape.fill")
                     }
                 }

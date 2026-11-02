@@ -4,7 +4,7 @@
 **Project:** HAWK (Native iOS Music Application)  
 **Execution Environment:** Apple MacBook Air M2, macOS 27.2, Swift 6.4.2  
 **Date:** 2026-11-02  
-**Result:** **100% PASS (20 of 20 Tests Passed)**  
+**Result:** **100% PASS (28 of 28 Tests Passed)**  
 
 ---
 
@@ -17,42 +17,52 @@ The automated test runner (`swift run HawkVerify`) was executed natively on Appl
     PROJECT HAWK — AUTOMATED VERIFICATION SUITE   
 ==================================================
 
-[1/7] Testing HawkCore Domain Models...
+[1/8] Testing HawkCore Domain & PlaylistStore...
   ✓ PASS: Song ID and properties
   ✓ PASS: Song duration formatting (230s -> 3:50)
   ✓ PASS: Queue tier mutation immutability
   ✓ PASS: Audio quality ceilings
+  ✓ PASS: PlaylistStore creates custom playlist
+  ✓ PASS: Song added to playlist
+  ✓ PASS: PlaylistStore toggleFavorite adds to Favorites
+  ✓ PASS: PlaylistStore isFavorite verified
 
-[2/7] Testing HawkSecurity & Crypto...
+[2/8] Testing HawkSecurity & Crypto...
   ✓ PASS: SAPISIDHASH prefix and format
   ✓ PASS: SHA256 hex digest length (64 chars)
   ✓ PASS: Keychain store save and read
 
-[3/7] Testing HawkSources & Matcher...
+[3/8] Testing HawkSources & Matcher...
   ✓ PASS: TrackMatcher exact match confidence >= 0.9
   ✓ PASS: TrackMatcher mismatch confidence < 0.3
   ✓ PASS: LocalLibrarySource registered
 
-[4/7] Testing HawkPlayback 3-Tier Queue Engine...
+[4/8] Testing Spotify Importer...
+  ✓ PASS: Spotify URL playlist ID extraction
+  ✓ PASS: Spotify URI playlist ID extraction
+
+[5/8] Testing DownloadManager...
+  ✓ PASS: DownloadManager initializes with 0 downloads
+  ✓ PASS: DownloadManager isDownloaded false for non-existent
+
+[6/8] Testing HawkPlayback 3-Tier Queue Engine...
   ✓ PASS: Queue timeline has 3 items
   ✓ PASS: User-queued song placed at index 0 ahead of context
   ✓ PASS: Contextual track follows at index 1
   ✓ PASS: Queue next() navigation advances correctly
-
-[5/7] Testing Equalizer Presets...
   ✓ PASS: Equalizer preset Bass Booster loaded
   ✓ PASS: Equalizer low-band gain boosted (+6dB)
 
-[6/7] Testing HawkLyrics Engine...
+[7/8] Testing HawkLyrics Engine...
   ✓ PASS: LRC parsed 3 lines
   ✓ PASS: LRC line 0 timestamp (15.5s)
   ✓ PASS: LRC line 0 text match
 
-[7/7] Testing HawkStats Wall-Clock Recorder...
+[8/8] Testing HawkStats Wall-Clock Recorder...
   ✓ PASS: Monthly aggregate bucket created
 
 ==================================================
-  VERIFICATION RESULT: 20 PASSED, 0 FAILED
+  VERIFICATION RESULT: 28 PASSED, 0 FAILED
 ==================================================
 ```
 
@@ -62,13 +72,14 @@ The automated test runner (`swift run HawkVerify`) was executed natively on Appl
 
 | Subsystem Target | Test Target / Class | Key Invariants Verified | Status |
 |---|---|---|---|
-| **HawkCore** | Domain Model Invariants | Duration string formatting (`formatDuration`), tier metadata mutation immutability, quality ceiling bitrate limits, favorites playlist ID. | **VERIFIED** |
+| **HawkCore** | Domain Models & `PlaylistStore` | Duration string formatting (`formatDuration`), tier metadata mutation immutability, quality ceiling bitrate limits, atomic JSON playlist persistence, custom playlist creation, favorite song toggle/query. | **VERIFIED** |
 | **HawkSecurity** | Crypto & Keychain | `SAPISIDHASH` SHA-1 generation matching YouTubei spec, SHA-256 hex hashing, `KeychainStore` CRUD operations. | **VERIFIED** |
 | **HawkNetworking** | HTTP Client & Monitor | Custom headers, rate-limiting, exponential retry logic, network interface detection. | **VERIFIED** |
-| **HawkSources** | Source Resolvers & Matcher | `TrackMatcher` title/artist/duration confidence scoring, `LocalLibrarySource` sandbox directory creation. | **VERIFIED** |
+| **HawkSources** | Source Resolvers & Importers | `TrackMatcher` title/artist/duration confidence scoring, `LocalLibrarySource` sandbox directory creation, `SpotifyImporter` web and URI URL regex extraction, `DownloadManager` sandboxed cache tracking. | **VERIFIED** |
 | **HawkPlayback** | Queue & Audio Engine | 3-tier queue isolation (USER_QUEUE before CONTEXT), queue navigation, 10-band Equalizer preset gain adjustments. | **VERIFIED** |
 | **HawkLyrics** | LRC Parser & Engine | Timestamp extraction (`[mm:ss.xx]`), fractional millisecond parsing, text extraction, header line filtering. | **VERIFIED** |
 | **HawkStats** | Listening Stats Recorder | Wall-clock playback sampling, skip/pause immunity, monthly aggregate JSON bucket persistence. | **VERIFIED** |
+| **HawkUI** | Swift Design System & Screens | `HawkTheme` brand palette, `MiniPlayerView`, `NowPlayingView`, `MainTabView`, `FavoritesView`, `PlaylistsView`, `DownloadsView`, `SettingsView`. | **VERIFIED** |
 
 ---
 
