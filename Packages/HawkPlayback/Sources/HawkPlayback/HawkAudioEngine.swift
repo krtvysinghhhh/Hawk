@@ -144,7 +144,14 @@ public actor HawkAudioEngine {
                 object: nil,
                 queue: .main
             ) { notification in
-                Task { await HawkAudioEngine.shared.handleInterruption(notification: notification) }
+                let userInfo = notification.userInfo
+                let typeValue = userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                let optionsValue = userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
+                Task {
+                    if let typeValue {
+                        await HawkAudioEngine.shared.handleInterruption(typeValue: typeValue, optionsValue: optionsValue)
+                    }
+                }
             }
 
             NotificationCenter.default.addObserver(
@@ -152,7 +159,12 @@ public actor HawkAudioEngine {
                 object: nil,
                 queue: .main
             ) { notification in
-                Task { await HawkAudioEngine.shared.handleRouteChange(notification: notification) }
+                let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+                Task {
+                    if let reasonValue {
+                        await HawkAudioEngine.shared.handleRouteChange(reasonValue: reasonValue)
+                    }
+                }
             }
         } catch {
             print("Failed to configure AVAudioSession: \(error)")
@@ -161,16 +173,14 @@ public actor HawkAudioEngine {
     }
 
     #if os(iOS)
-    public func handleInterruption(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+    public func handleInterruption(typeValue: UInt, optionsValue: UInt?) {
+        guard let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
 
         switch type {
         case .began:
             pause()
         case .ended:
-            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+            if let optionsValue {
                 let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                 if options.contains(.shouldResume) {
                     resume()
@@ -181,10 +191,8 @@ public actor HawkAudioEngine {
         }
     }
 
-    public func handleRouteChange(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
+    public func handleRouteChange(reasonValue: UInt) {
+        guard let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
 
         if reason == .oldDeviceUnavailable {
             pause()

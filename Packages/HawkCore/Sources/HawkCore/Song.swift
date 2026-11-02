@@ -88,4 +88,8 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
             return String(format: "%d:%02d", minutes, seconds)
         }
     }
+
+    public var formattedDuration: String {
+        Song.formatDuration(duration)
+    }
 }

@@ -7,8 +7,10 @@ settings:
   SWIFT_VERSION: "6.0"
   IPHONEOS_DEPLOYMENT_TARGET: "17.0"
   PRODUCT_BUNDLE_IDENTIFIER: com.hawk.music
-  DEVELOPMENT_TEAM: ""
-  CODE_SIGN_STYLE: Automatic
+  CODE_SIGNING_ALLOWED: NO
+packages:
+  HAWK:
+    path: .
 targets:
   HAWK:
     type: application

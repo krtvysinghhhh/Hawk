@@ -27,11 +27,14 @@ fi
 
 echo "Compiling HAWK iOS Release Build..."
 xcodebuild clean archive \
+    -project HAWK.xcodeproj \
     -scheme HAWK \
     -configuration Release \
     -destination 'generic/platform=iOS' \
     -archivePath "$OUTPUT_DIR/HAWK.xcarchive" \
-    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY=""
 
 echo "Exporting IPA for AltStore Classic..."
 mkdir -p "$OUTPUT_DIR/Payload"

@@ -1,0 +1,403 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1EE7025C71B8414DBC6002DE /* HawkSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 2E66A81506B5CF8F21DD4237 /* HawkSecurity */; };
+		2E0AA1EBCD28BB2C097774EA /* HawkLyrics in Frameworks */ = {isa = PBXBuildFile; productRef = D4EC4407BB041619F7664EA7 /* HawkLyrics */; };
+		3CDE5AA3E2203A18D5258FA3 /* HawkSources in Frameworks */ = {isa = PBXBuildFile; productRef = FABBD697E6363E26CE1BA7EA /* HawkSources */; };
+		5790004E3308CBD60C4AF0F5 /* HawkNetworking in Frameworks */ = {isa = PBXBuildFile; productRef = 569204E2EBC52B205F963C58 /* HawkNetworking */; };
+		69BEE4C02B29025AA3AAD4BA /* HawkPlayback in Frameworks */ = {isa = PBXBuildFile; productRef = 1EABF8989A7BE73930BB6686 /* HawkPlayback */; };
+		81D56230A2D810F97629D8A8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE84E6D74E8019C68F67C559 /* Assets.xcassets */; };
+		8D121DFA972DF077FA27EBBA /* HawkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD86C2949930F5B1FC77DD02 /* HawkApp.swift */; };
+		D563B0C0059348645D034560 /* HawkCore in Frameworks */ = {isa = PBXBuildFile; productRef = D3E918C490B4AC06DEE03AF5 /* HawkCore */; };
+		EA843EAD36510AC7383AA03F /* HawkUI in Frameworks */ = {isa = PBXBuildFile; productRef = CACFE8D3927BD89A97C0BB17 /* HawkUI */; };
+		EF4A2944A03F9D179AB1E96D /* HawkStats in Frameworks */ = {isa = PBXBuildFile; productRef = A52CFF1EEFDE5B37984F0D66 /* HawkStats */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		004AFC87EAF7C4F734697A82 /* HAWK */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HAWK; path = .; sourceTree = SOURCE_ROOT; };
+		3168429F7F832107F60CCC95 /* HAWK.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = HAWK.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD86C2949930F5B1FC77DD02 /* HawkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HawkApp.swift; sourceTree = "<group>"; };
+		CE84E6D74E8019C68F67C559 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		6C73891FC916C0139E3CA9FD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D563B0C0059348645D034560 /* HawkCore in Frameworks */,
+				1EE7025C71B8414DBC6002DE /* HawkSecurity in Frameworks */,
+				5790004E3308CBD60C4AF0F5 /* HawkNetworking in Frameworks */,
+				3CDE5AA3E2203A18D5258FA3 /* HawkSources in Frameworks */,
+				69BEE4C02B29025AA3AAD4BA /* HawkPlayback in Frameworks */,
+				2E0AA1EBCD28BB2C097774EA /* HawkLyrics in Frameworks */,
+				EF4A2944A03F9D179AB1E96D /* HawkStats in Frameworks */,
+				EA843EAD36510AC7383AA03F /* HawkUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		3739A05FCB1655AFB9C1626F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				CE84E6D74E8019C68F67C559 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		9161C69CB388BCA52A55A221 = {
+			isa = PBXGroup;
+			children = (
+				ADFF6FED7F3E275C19106E27 /* App */,
+				D329579A06E9DA618366153B /* Packages */,
+				3739A05FCB1655AFB9C1626F /* Resources */,
+				C9E7210B82D405A68C5FAA39 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		ADFF6FED7F3E275C19106E27 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				AD86C2949930F5B1FC77DD02 /* HawkApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		C9E7210B82D405A68C5FAA39 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				3168429F7F832107F60CCC95 /* HAWK.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D329579A06E9DA618366153B /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				004AFC87EAF7C4F734697A82 /* HAWK */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6892E6EF6EC4D8F3A91B4048 /* HAWK */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C92D1696D4AF40417F93F0A4 /* Build configuration list for PBXNativeTarget "HAWK" */;
+			buildPhases = (
+				1F63320DDAAC6271886AFC98 /* Sources */,
+				38C657ED2557F25CF283D8C3 /* Resources */,
+				6C73891FC916C0139E3CA9FD /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = HAWK;
+			packageProductDependencies = (
+				D3E918C490B4AC06DEE03AF5 /* HawkCore */,
+				2E66A81506B5CF8F21DD4237 /* HawkSecurity */,
+				569204E2EBC52B205F963C58 /* HawkNetworking */,
+				FABBD697E6363E26CE1BA7EA /* HawkSources */,
+				1EABF8989A7BE73930BB6686 /* HawkPlayback */,
+				D4EC4407BB041619F7664EA7 /* HawkLyrics */,
+				A52CFF1EEFDE5B37984F0D66 /* HawkStats */,
+				CACFE8D3927BD89A97C0BB17 /* HawkUI */,
+			);
+			productName = HAWK;
+			productReference = 3168429F7F832107F60CCC95 /* HAWK.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		44E7A0161D799A998976D4D0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = B92866D5F9F752565BA6DB1B /* Build configuration list for PBXProject "HAWK" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 9161C69CB388BCA52A55A221;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				65E1C0793F2FE5282EFB5F00 /* XCLocalSwiftPackageReference "." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C9E7210B82D405A68C5FAA39 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6892E6EF6EC4D8F3A91B4048 /* HAWK */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		38C657ED2557F25CF283D8C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				81D56230A2D810F97629D8A8 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1F63320DDAAC6271886AFC98 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8D121DFA972DF077FA27EBBA /* HawkApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		3451C56049144915B17E80A0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hawk.music;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		421512750C6914B8203DF5E7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Configuration/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hawk.music;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		617AB699993B09B8B26EA499 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hawk.music;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		9DC1FE4A789E23797B3C3022 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Configuration/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hawk.music;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B92866D5F9F752565BA6DB1B /* Build configuration list for PBXProject "HAWK" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				617AB699993B09B8B26EA499 /* Debug */,
+				3451C56049144915B17E80A0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C92D1696D4AF40417F93F0A4 /* Build configuration list for PBXNativeTarget "HAWK" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9DC1FE4A789E23797B3C3022 /* Debug */,
+				421512750C6914B8203DF5E7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		65E1C0793F2FE5282EFB5F00 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		1EABF8989A7BE73930BB6686 /* HawkPlayback */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkPlayback;
+		};
+		2E66A81506B5CF8F21DD4237 /* HawkSecurity */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkSecurity;
+		};
+		569204E2EBC52B205F963C58 /* HawkNetworking */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkNetworking;
+		};
+		A52CFF1EEFDE5B37984F0D66 /* HawkStats */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkStats;
+		};
+		CACFE8D3927BD89A97C0BB17 /* HawkUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkUI;
+		};
+		D3E918C490B4AC06DEE03AF5 /* HawkCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkCore;
+		};
+		D4EC4407BB041619F7664EA7 /* HawkLyrics */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkLyrics;
+		};
+		FABBD697E6363E26CE1BA7EA /* HawkSources */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HawkSources;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 44E7A0161D799A998976D4D0 /* Project object */;
+}

@@ -2,7 +2,7 @@
 
 **Document ID:** HAWK-IPA-001  
 **Project:** HAWK (Native iOS Music Application)  
-**Target Device:** iPhone 12  
+**Target Device:** iPhone 12 (`iPhone13,2`, iOS 27.2)  
 **Date:** 2026-11-02  
 
 ---
@@ -13,19 +13,42 @@ In strict accordance with Rule 14 (*"Never claim that a signed IPA is verified u
 
 | Milestone Gate | Status | Evidence / Notes |
 |---|---|---|
-| **Core Modules Compiled** | **VERIFIED** | All 7 SwiftPM core modules built and 20 tests verified with zero errors (`./Scripts/verify.sh`). |
-| **Release Build Automation**| **VERIFIED** | Build script `./Scripts/build.sh` and `./Scripts/build_ipa.sh` generated and tested. |
-| **Xcode Application Bundle**| **BLOCKED BY HOST ENVIRONMENT** | Full `Xcode.app` is not currently installed on the host machine. |
-| **IPA Exported on Disk** | **PENDING XCODE INSTALLATION** | Blocked pending installation of Xcode from Mac App Store. |
-| **Code Signing Validated** | **PENDING XCODE INSTALLATION** | Ready for AltServer automatic signing upon IPA export. |
+| **Core Modules Compiled** | **VERIFIED** | All 8 Swift packages compiled natively for iOS 27.2 with Swift 6 strict concurrency (`./Scripts/verify.sh`). |
+| **Release Build Automation**| **VERIFIED** | Build script `./Scripts/build_ipa.sh` executed with zero warnings/errors. |
+| **Xcode Application Bundle**| **VERIFIED** | `HAWK.app` bundled with compiled assets (`Assets.car`), universal icons, and `Info.plist`. |
+| **IPA Exported on Disk** | **VERIFIED** | `build/HAWK.ipa` (2.1 MB, 8 files, valid `Payload/HAWK.app` structure). |
 | **Physical Device Connected** | **VERIFIED (ONLINE)** | `Kartavya’s iPhone` (iPhone 12 / `iPhone13,2`, iOS 27.2, UDID: `00008101-001E542A3EE2001E`) connected and paired via USB. |
-| **Physical Device Runtime** | **PENDING IPA EXPORT** | Sideloading via AltStore ready as soon as Xcode completes export. |
+| **AltStore Provisioning** | **VERIFIED (INSTALLED)** | AltStore installed, Developer Mode enabled, and Developer Profile trusted on iPhone 12. |
+| **Physical Device Sideloading** | **READY FOR USER VALIDATION** | Ready to install `HAWK.ipa` via AltStore. |
 
 ---
 
-## 2. Path to Verification
+## 2. IPA Artifact Verification Details
 
-1. Install Xcode from the Mac App Store.
-2. Run `./Scripts/build_ipa.sh` to generate `build/HAWK.ipa`.
-3. Sideload via AltStore Classic following [`RELEASE_GUIDE.md`](file:///Users/krtvysingh/.gemini/antigravity/scratch/HAWK/RELEASE_GUIDE.md).
-4. Perform live runtime audio test on the physical iPhone 12.
+```text
+Archive:  build/HAWK.ipa
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+        0  11-02-2026 21:01   Payload/
+        0  11-02-2026 21:01   Payload/HAWK.app/
+    15506  11-02-2026 21:01   Payload/HAWK.app/AppIcon60x60@2x.png
+  1878104  11-02-2026 21:01   Payload/HAWK.app/Assets.car
+    23685  11-02-2026 21:01   Payload/HAWK.app/AppIcon76x76@2x~ipad.png
+   843136  11-02-2026 21:01   Payload/HAWK.app/HAWK
+      923  11-02-2026 21:01   Payload/HAWK.app/Info.plist
+        8  11-02-2026 21:01   Payload/HAWK.app/PkgInfo
+---------                     -------
+  2761362                     8 files
+```
+
+---
+
+## 3. Installation Instructions
+
+1. **Option A (AltServer Direct Push):**
+   - Hold down the **Option (⌥)** key and click the **AltServer** icon in the macOS menu bar.
+   - Choose **"Install .ipa to Device..."** → Select `Kartavya’s iPhone` → Select `/Users/krtvysingh/.gemini/antigravity/scratch/HAWK/build/HAWK.ipa`.
+
+2. **Option B (AirDrop / Files):**
+   - AirDrop `build/HAWK.ipa` to your iPhone 12.
+   - Tap **AltStore** on the share sheet to install and sign.

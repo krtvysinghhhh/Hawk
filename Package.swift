@@ -16,6 +16,7 @@ let package = Package(
         .library(name: "HawkPlayback", targets: ["HawkPlayback"]),
         .library(name: "HawkLyrics", targets: ["HawkLyrics"]),
         .library(name: "HawkStats", targets: ["HawkStats"]),
+        .library(name: "HawkUI", targets: ["HawkUI"]),
         .executable(name: "HawkVerify", targets: ["HawkVerify"])
     ],
     dependencies: [],
@@ -54,6 +55,17 @@ let package = Package(
             name: "HawkStats",
             dependencies: ["HawkCore"],
             path: "Packages/HawkStats"
+        ),
+        .target(
+            name: "HawkUI",
+            dependencies: [
+                "HawkCore",
+                "HawkPlayback",
+                "HawkSources",
+                "HawkLyrics",
+                "HawkStats"
+            ],
+            path: "Packages/HawkUI"
         ),
         .executableTarget(
             name: "HawkVerify",

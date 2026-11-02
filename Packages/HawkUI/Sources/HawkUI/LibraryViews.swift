@@ -73,8 +73,8 @@ public struct PlaylistsView: View {
                                 .fill(HawkTheme.cardBackground)
                                 .frame(width: 50, height: 50)
                                 .overlay(
-                                    Image(systemName: playlist.isSystemFavorites ? "heart.fill" : "music.note.list")
-                                        .foregroundColor(playlist.isSystemFavorites ? .red : HawkTheme.primaryAccent)
+                                    Image(systemName: playlist.isFavorites ? "heart.fill" : "music.note.list")
+                                        .foregroundColor(playlist.isFavorites ? .red : HawkTheme.primaryAccent)
                                 )
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(playlist.title)
@@ -92,7 +92,7 @@ public struct PlaylistsView: View {
                     Task {
                         for index in indexSet {
                             let p = playlists[index]
-                            if !p.isSystemFavorites {
+                            if !p.isFavorites {
                                 await PlaylistStore.shared.deletePlaylist(id: p.id)
                             }
                         }
@@ -272,8 +272,8 @@ public struct SettingsView: View {
             Form {
                 Section(header: Text("Streaming & Audio Quality").foregroundColor(HawkTheme.textSecondary)) {
                     Picker("Streaming Quality", selection: $selectedQuality) {
-                        Text("Low (64 kbps)").tag(AudioQuality.low)
-                        Text("Medium (128 kbps)").tag(AudioQuality.medium)
+                        Text("Data Saver (96 kbps)").tag(AudioQuality.low)
+                        Text("Standard (160 kbps)").tag(AudioQuality.standard)
                         Text("High (320 kbps AAC)").tag(AudioQuality.high)
                         Text("Lossless (FLAC)").tag(AudioQuality.lossless)
                     }
@@ -289,7 +289,6 @@ public struct SettingsView: View {
                         Text("Acoustic").tag(EqualizerPreset.acoustic)
                         Text("Electronic").tag(EqualizerPreset.electronic)
                         Text("Rock").tag(EqualizerPreset.rock)
-                        Text("Hip-Hop").tag(EqualizerPreset.hipHop)
                     }
                     .onChange(of: selectedPreset) { _, newPreset in
                         EqualizerManager.shared.applyPreset(newPreset)
