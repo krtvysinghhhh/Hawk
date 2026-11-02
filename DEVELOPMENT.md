@@ -1,33 +1,73 @@
-# HAWK — DEVELOPMENT GUIDE
+# HAWK — Development Guide
 
-**Target Audience:** iOS Engineers, Audio Systems Engineers, QA Engineers  
-**Toolchain:** Swift 6.4.2+, SwiftPM, Xcode 16+  
-**Target Environment:** macOS on Apple Silicon (M-series)  
+**Target Audience:** iOS Engineers, Audio Systems Specialists, QA Engineers  
+**Toolchain:** Swift 6.0+, Xcode 16+, XcodeGen  
+**Target Device:** iPhone 12 (and iOS 17.0+ devices)  
 
 ---
 
-## 1. Quick Start
+## 1. Environment & Prerequisites
 
-### Building Core Packages via SwiftPM
-You can build and test all business logic, audio state machines, lyrics parsers, and data models directly using SwiftPM:
+- **macOS:** macOS Sonoma 14+ or macOS Sequoia 15+
+- **Xcode:** Xcode 16.0 or later (configured via `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`)
+- **XcodeGen:** Required for generating `.xcodeproj` from `project.yml`:
+  ```bash
+  brew install xcodegen
+  ```
+
+---
+
+## 2. Quick Start
+
+### Build and Verify via SwiftPM
+Build all core frameworks, audio state machines, cryptographic utilities, and run the 57-test automated verification suite:
 
 ```bash
 cd HAWK
-swift build
-swift test
+swift run HawkVerify
 ```
 
-### Xcode App Workflow
-When building for the iOS Simulator or physical iPhone 12:
-1. Open the project in Xcode (or generate using `./Scripts/generate_project.sh`).
-2. Select target `HAWK` and destination `iPhone 12` (or iOS Simulator).
-3. Build and Run (`⌘R`).
+### Regenerate Xcode Project
+Whenever project structure or source files are added/modified:
+```bash
+xcodegen generate
+```
+
+### Build & Export Release IPA
+To produce an installable `.ipa` for physical devices (AltStore / TrollStore / Sideloadly):
+```bash
+./Scripts/build_ipa.sh
+```
+Output artifact is generated at `build/HAWK.ipa`.
 
 ---
 
-## 2. Coding Guidelines
+## 3. Apple CarPlay Integration & Testing
 
-1. **Swift Concurrency:** All asynchronous operations must use `async/await`. Shared mutable state must be encapsulated within `actor` types. Avoid `@unchecked Sendable` unless backed by rigorous locks.
-2. **Apple HIG:** All views must adhere to Apple Human Interface Guidelines. Always support Dynamic Type, Dark/Light modes, and VoiceOver accessibility labels.
-3. **Audio Stability:** Do not block audio actor threads with network I/O or file writes. Always decode or fetch streams asynchronously before cueing audio.
-4. **Security & Privacy:** Never log raw authentication cookies, tokens, or personal identifiers. Always use the `KeychainStore` for secrets.
+HAWK integrates native Apple CarPlay support using the `CarPlay` framework and `CPTemplateApplicationSceneDelegate`.
+
+### CarPlay Scene Architecture
+- **Delegate:** `HawkCarPlaySceneDelegate` (`App/HawkCarPlaySceneDelegate.swift`)
+- **Root Template:** `CPTabBarTemplate` exposing **Listen Now**, **Favourites**, **Playlists**, and **Library**.
+- **Now Playing:** Full synchronization with `CPNowPlayingTemplate.shared` and `PlaybackCoordinator`.
+
+### Testing in the CarPlay Simulator
+1. Launch Xcode and boot any iOS 17+ Simulator (`Xcode` -> `Open Developer Tool` -> `Simulator`).
+2. Run the `HAWK` scheme on the simulator.
+3. In the Simulator menu, navigate to:
+   **I/O -> External Displays -> CarPlay**
+4. A secondary CarPlay vehicle display will appear running the native HAWK in-car interface.
+
+### CarPlay Distribution Entitlement Requirement
+- Distribution on the Apple App Store requires the official `com.apple.developer.carplay-audio` entitlement granted by Apple.
+- Entitlement reference: [Requesting CarPlay Entitlements](https://developer.apple.com/documentation/carplay/requesting-carplay-entitlements).
+- A reference entitlement file is provided at `Configuration/HAWK-CarPlay.entitlements`.
+- For standard sideloading (free Apple ID via AltStore), the active build leaves unauthorized entitlements disabled so installations succeed cleanly without signing conflicts.
+
+---
+
+## 4. Architectural Rules
+
+1. **Swift Concurrency:** All shared mutable state is isolated within `actor` types (`HawkAudioEngine`, `QueueManager`, `PlaylistStore`, `DownloadManager`).
+2. **True State Synchronization:** Never simulate playback states. UI indicators (play/pause, buffer spinners, scrubbing elapsed time) must strictly reflect `AVPlayer` state.
+3. **Local Privacy:** No third-party analytical SDKs or tracking networks are permitted.

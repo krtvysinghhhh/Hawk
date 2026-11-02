@@ -1,30 +1,68 @@
-# CHANGELOG — PROJECT HAWK
+# Changelog — Project HAWK
 
-All notable changes to Project HAWK will be documented in this file.
-
+All notable changes to Project HAWK are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-11-02
+---
+
+## [1.1.0] - 2026-11-02
 
 ### Added
-- **Phase Zero (M0):** Complete host environment reconnaissance report (`PROJECT_STATUS.md`).
-- **Phase One (M1):** Deep reference repository audit of BitChord (`REFERENCE_AUDIT.md`, `FEATURE_INVENTORY.md`, `DEPENDENCY_AUDIT.md`, `LICENSE_AUDIT.md`, `SECURITY_AUDIT.md`).
-- **Phase Two (Legal):** GPLv3 license adoption, third-party notices (`THIRD_PARTY_NOTICES.md`), and attributions (`ATTRIBUTIONS.md`).
-- **Phase Three (M2):** HAWK architecture proposal (`ARCHITECTURE.md`, `MIGRATION_PLAN.md`, `ARCHITECTURE_DECISIONS.md`, `IOS_FEATURE_MAPPING.md`). Approved by user.
-- **Phase Four (M3 Foundation):** Project directory structure, Git initialization, `.gitignore`, modular Swift package configuration.
-- **Phase Five (M4–M9 Modules):**
-  - `HawkCore`: Domain entities (`Song`, `ArtistRef`, `AudioQuality`, `Playlist`, `QueueTier`), thread-safe `PlaylistStore` actor with atomic JSON persistence.
-  - `HawkSecurity`: Hardware-backed `KeychainStore` enclave, `CryptoUtils` (`SAPISIDHASH` SHA-1 and SHA-256).
-  - `HawkNetworking`: `HawkHttpClient` with async retry and rate limiting, `NetworkMonitor` interface watcher.
-  - `HawkSources`: `YouTubeSource` (Innertube WEB_REMIX/IOS context), `JioSaavnSource` (320kbps AAC), `LocalLibrarySource`, `TrackMatcher` confidence engine, `SpotifyImporter` regex playlist scraper, `DownloadManager` offline track manager.
-  - `HawkPlayback`: `QueueManager` 3-tier queue state machine, `HawkAudioEngine` (dual AVPlayer crossfade, lock screen NowPlaying info & MPRemoteCommandCenter), `EqualizerManager` 10-band presets.
-  - `HawkLyrics`: Synchronized LRC parser with millisecond precision and `LyricsEngine`.
-  - `HawkStats`: Wall-clock listening recorder and monthly aggregate bucketing.
-  - `HawkUI`: Apple HIG dark glass aesthetic (`HawkTheme`, `MiniPlayerView`, `NowPlayingView`, `MainTabView`, `FavoritesView`, `PlaylistsView`, `DownloadsView`, `SettingsView`).
-- **Phase Six (M10–M12 Delivery & Tooling):**
-  - Generated original 1024x1024 HAWK falcon waveform app icon (`AppIcon.appiconset`).
-  - Added Xcode workspace (`HAWK.xcworkspace`) and XcodeGen specification (`project.yml`).
-  - Added automated verification harness (`Tests/HawkVerify`) with 28 passing tests.
-  - Added build automation scripts (`build.sh`, `verify.sh`, `build_ipa.sh`).
-  - GitHub Actions CI workflow (`.github/workflows/ci.yml`).
+- **Apple CarPlay Audio Integration:**
+  - Implemented `HawkCarPlaySceneDelegate` conforming to `CPTemplateApplicationSceneDelegate`.
+  - In-car tabbed browsing via `CPTabBarTemplate`: Listen Now, Favourites, Playlists, and Library (Artists, Songs, Queue).
+  - Full synchronization with `CPNowPlayingTemplate.shared` and `PlaybackCoordinator`.
+  - Prepared `Configuration/HAWK-CarPlay.entitlements` with `com.apple.developer.carplay-audio`.
+- **Dedicated Personal Music Library:**
+  - Comprehensive Apple Music-inspired Library hub in bottom navigation.
+  - Category routes with custom iconography and badge accents: Playlists, Artists, Albums, Songs, Favourites, Recently Added, Downloads, and Local Files.
+  - `AllSongsView` with full-text search, Play All, and Shuffle All controls.
+  - `ArtistsView` and `AlbumsView` with alphabetical groupings and discography drill-down.
+  - `LibraryAggregator` service aggregating distinct user tracks across playlists, downloads, and favorites.
+- **Official Brand Identity:**
+  - Adopted official HAWK rainbow-wave dimensional artwork as the master application icon.
+  - Generated high-resolution 1024×1024 `AppIcon.appiconset` asset catalog compliant with Xcode and Apple App Store specifications.
+  - Master logo asset placed in `Resources/hawk-logo.png`.
+- **Liquid Glass Design System:**
+  - Native SwiftUI `.ultraThinMaterial` surfaces with continuous corner radii (`.continuous`) and specular gradient borders.
+  - Interactive press effects with dynamic spring animations.
+  - Built-in accessibility fallbacks for *Reduce Transparency* and *Reduce Motion*.
+- **Editorial 1:1 Home Screen:**
+  - Dynamic time-of-day greeting ("Good morning", "Good afternoon", "Good evening").
+  - Editorial featured hero banner with blurred artwork backdrop and floating Liquid Glass play button.
+  - 1:1 square artwork horizontal carousels (160×160pt) for Jump Back In, Made For You, Trending Worldwide, and Favorite Artists.
+- **Predictive Stream Preload & Cache:**
+  - In-memory stream resolution cache with 1-hour TTL.
+  - Background `AVPlayerItem` asset preloader (`triggerPredictivePreload`) for instant track transitions.
+- **Enhanced Synchronized Lyrics:**
+  - Real-time line highlighting synced to true `AVPlayer` hardware time.
+  - Tap-to-seek on any lyric line to jump audio directly to that timestamp.
+  - Manual scroll detection with floating "Sync to Audio" re-center pill.
+- **Automated Verification & CI:**
+  - Expanded `HawkVerify` automated test suite to 57 passing tests.
+  - Added GitHub Actions CI workflow (`.github/workflows/ci.yml`) for macOS 14 runners.
+
+---
+
+## [1.0.0] - 2026-11-02
+
+### Added
+- **Core Architecture:**
+  - Complete independent native iOS music application codebase in Swift 6.
+  - Modular package architecture: `HawkCore`, `HawkSecurity`, `HawkNetworking`, `HawkSources`, `HawkPlayback`, `HawkLyrics`, `HawkStats`, `HawkUI`.
+- **Audio & Playback:**
+  - AVFoundation dual-player engine with studio crossfade (0–12s).
+  - True 9-state playback machine (`idle`, `loading`, `buffering`, `ready`, `playing`, `paused`, `seeking`, `ended`, `failed`).
+  - JioSaavn live DES decryption with key `38346591`.
+  - YouTube Music high-bitrate audio streaming with SAPISIDHASH signature authentication.
+  - 3-tier queue management (`userQueue`, `context`, `autoplay`).
+  - Lock Screen Control Center integration (`MPNowPlayingInfoCenter`, `MPRemoteCommandCenter`).
+- **Discovery & Metadata:**
+  - `TrackMatcher` confidence scoring algorithm.
+  - Version preservation for Live, Remix, Remaster, and Acoustic recordings.
+  - High-resolution 500×500 artwork upscaling.
+  - Spotify playlist URL regex importer.
+- **Testing & Packaging:**
+  - Automated verification test suite (`HawkVerify`).
+  - Standalone release package script (`build_ipa.sh`) for AltStore sideloading.
