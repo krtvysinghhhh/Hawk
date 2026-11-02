@@ -1,0 +1,31 @@
+# Xcode
+.DS_Store
+*/.DS_Store
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Credentials & Signing
+*.key
+*.pem
+*.p12
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.cert
+keystore.properties
+local.properties
+
+# IPA & Release Outputs
+*.ipa
+*.xcarchive
+*.dSYM.zip
+*.dSYM
