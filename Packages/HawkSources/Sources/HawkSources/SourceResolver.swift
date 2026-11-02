@@ -84,7 +84,7 @@ public actor SourceResolver {
 
     private var providers: [MusicSourceProvider] = []
 
-    public init(providers: [MusicSourceProvider] = [YouTubeSource(), JioSaavnSource(), LocalLibrarySource()]) {
+    public init(providers: [MusicSourceProvider] = [JioSaavnSource(), YouTubeSource(), LocalLibrarySource()]) {
         self.providers = providers
     }
 
@@ -94,14 +94,28 @@ public actor SourceResolver {
 
     /// Resolves an openable audio stream, attempting fallback across providers if needed.
     public func resolve(song: Song, qualityCeiling: AudioQuality = .high) async throws -> SourceStream {
-        // If song is local, resolve directly
+        // 1. Local file path
         if song.localFileURL != nil || song.id.hasPrefix("file://") {
             if let localProvider = providers.first(where: { $0.sourceId == "local" }) {
                 return try await localProvider.resolveStream(song: song, qualityCeiling: qualityCeiling)
             }
         }
 
-        // Try primary YouTube source
+        // 2. Direct encrypted media URI fast-path (JioSaavn)
+        if let jio = providers.first(where: { $0.sourceId == "jiosaavn" }) {
+            if let stream = try? await jio.resolveStream(song: song, qualityCeiling: qualityCeiling) {
+                return stream
+            }
+        }
+
+        // 3. Provider-specific resolution if designated
+        if let targetId = song.sourceId, let targetProv = providers.first(where: { $0.sourceId == targetId }) {
+            if let stream = try? await targetProv.resolveStream(song: song, qualityCeiling: qualityCeiling) {
+                return stream
+            }
+        }
+
+        // 4. Try all registered providers in sequence
         for provider in providers {
             do {
                 let stream = try await provider.resolveStream(song: song, qualityCeiling: qualityCeiling)
@@ -111,6 +125,6 @@ public actor SourceResolver {
             }
         }
 
-        throw HawkError.streamNotFound(song.id)
+        throw HawkError.streamNotFound(song.title)
     }
 }

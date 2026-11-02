@@ -34,48 +34,55 @@ public final class JioSaavnSource: MusicSourceProvider, @unchecked Sendable {
 
     // MARK: - Stream Resolution
     public func resolveStream(song: Song, qualityCeiling: AudioQuality = .high) async throws -> SourceStream {
-        // If the song already has an encrypted media url stored in localUri or needs direct query:
-        guard let encodedId = song.id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0%3F_marker%3D0&_format=json&pids=\(encodedId)") else {
-            throw HawkError.streamNotFound(song.id)
+        // Fast path: if song already has its encrypted media URL stored:
+        if let encMediaUrl = song.mediaUri, !encMediaUrl.isEmpty {
+            if let stream = tryDecryptMediaUrl(encMediaUrl, qualityCeiling: qualityCeiling) {
+                return stream
+            }
         }
 
-        let (data, response) = try await httpClient.request(url: url)
-        guard (200...299).contains(response.statusCode) else {
-            throw HawkError.invalidResponse(response.statusCode)
+        // Search lookup fallback by title + artist
+        let query = "\(song.title) \(song.artist)".trimmingCharacters(in: .whitespaces)
+        if let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+           let searchUrl = URL(string: "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=android&n=5&p=1&q=\(encodedQuery)") {
+            if let (data, response) = try? await httpClient.request(url: searchUrl),
+               (200...299).contains(response.statusCode),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let results = json["results"] as? [[String: Any]],
+               let first = results.first,
+               let moreInfo = first["more_info"] as? [String: Any],
+               let encUrl = moreInfo["encrypted_media_url"] as? String {
+                let has320 = (moreInfo["320kbps"] as? String) == "true"
+                if let stream = tryDecryptMediaUrl(encUrl, has320: has320, qualityCeiling: qualityCeiling) {
+                    return stream
+                }
+            }
         }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let songDict = json[song.id] as? [String: Any],
-              let moreInfo = songDict["more_info"] as? [String: Any],
-              let encryptedMediaUrl = moreInfo["encrypted_media_url"] as? String else {
-            throw HawkError.streamNotFound(song.id)
+        throw HawkError.streamNotFound(song.id)
+    }
+
+    private func tryDecryptMediaUrl(_ encMediaUrl: String, has320: Bool = true, qualityCeiling: AudioQuality = .high) -> SourceStream? {
+        do {
+            let decryptedBase = try CryptoUtils.decryptJioSaavnUrl(encryptedUrl: encMediaUrl, desKey: "38346591")
+            let streamUrlString: String
+            if has320 && qualityCeiling.maxKbps >= 320 {
+                streamUrlString = decryptedBase
+                    .replacingOccurrences(of: "_96.mp4", with: "_320.mp4")
+                    .replacingOccurrences(of: "_160.mp4", with: "_320.mp4")
+            } else {
+                streamUrlString = decryptedBase
+            }
+            guard let finalURL = URL(string: streamUrlString) else { return nil }
+            return SourceStream(
+                url: finalURL,
+                quality: (has320 && qualityCeiling.maxKbps >= 320) ? .high : .standard,
+                mimeType: "audio/mp4",
+                sourceId: sourceId
+            )
+        } catch {
+            return nil
         }
-
-        // Decrypt the DES media URL
-        let decryptedBase = try CryptoUtils.decryptJioSaavnUrl(encryptedUrl: encryptedMediaUrl)
-
-        // Select the 320kbps rendition if supported
-        let has320 = (moreInfo["320kbps"] as? String) == "true"
-        let streamUrlString: String
-
-        if has320 && qualityCeiling.maxKbps >= 320 {
-            streamUrlString = decryptedBase.replacingOccurrences(of: "_96.mp4", with: "_320.mp4")
-                .replacingOccurrences(of: "_160.mp4", with: "_320.mp4")
-        } else {
-            streamUrlString = decryptedBase
-        }
-
-        guard let finalURL = URL(string: streamUrlString) else {
-            throw HawkError.streamNotFound(song.id)
-        }
-
-        return SourceStream(
-            url: finalURL,
-            quality: (has320 && qualityCeiling.maxKbps >= 320) ? .high : .standard,
-            mimeType: "audio/mp4",
-            sourceId: sourceId
-        )
     }
 
     private func parseSearchResults(from data: Data) -> [Song] {
@@ -88,7 +95,8 @@ public final class JioSaavnSource: MusicSourceProvider, @unchecked Sendable {
             guard let id = dict["id"] as? String,
                   let title = (dict["title"] as? String)?
                     .replacingOccurrences(of: "&quot;", with: "\"")
-                    .replacingOccurrences(of: "&amp;", with: "&"),
+                    .replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&#039;", with: "'"),
                   let moreInfo = dict["more_info"] as? [String: Any] else {
                 return nil
             }
@@ -103,13 +111,25 @@ public final class JioSaavnSource: MusicSourceProvider, @unchecked Sendable {
                 artworkURL = URL(string: highRes)
             }
 
+            let encMediaUrl = moreInfo["encrypted_media_url"] as? String
+            let album = (moreInfo["album"] as? String)?
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&#039;", with: "'")
+            let isExplicit = (dict["explicit_content"] as? String) == "1"
+
             return Song(
                 id: id,
                 title: title,
                 artist: artist,
+                albumTitle: album,
                 duration: duration,
                 artworkURL: artworkURL,
-                sourceQuality: .high
+                sourceQuality: .high,
+                mediaUri: encMediaUrl,
+                sourceId: sourceId,
+                providerIdentifiers: [sourceId: id],
+                explicitStatus: isExplicit
             )
         }
     }

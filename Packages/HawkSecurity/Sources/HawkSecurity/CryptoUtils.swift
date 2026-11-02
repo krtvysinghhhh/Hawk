@@ -27,10 +27,10 @@ public enum CryptoUtils {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Decrypts JioSaavn's DES-encrypted media URL string using the public key "3834658528894646".
+    /// Decrypts JioSaavn's DES-encrypted media URL string using the key "38346591".
     public static func decryptJioSaavnUrl(
         encryptedUrl: String,
-        desKey: String = "3834658528894646"
+        desKey: String = "38346591"
     ) throws -> String {
         guard let cipherData = Data(base64Encoded: encryptedUrl),
               let keyData = desKey.data(using: .utf8) else {

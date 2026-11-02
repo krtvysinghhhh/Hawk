@@ -11,8 +11,7 @@ public final class PlaybackCoordinator {
     public static let shared = PlaybackCoordinator()
 
     public var currentSong: Song?
-    public var isPlaying: Bool = false
-    public var isLoading: Bool = false
+    public var playbackState: PlaybackState = .idle
     public var currentTime: TimeInterval = 0.0
     public var duration: TimeInterval = 0.0
     public var errorMessage: String?
@@ -21,6 +20,23 @@ public final class PlaybackCoordinator {
     public var repeatMode: RepeatMode = .off
     public var isShuffleActive: Bool = false
     public var queue: [Song] = []
+
+    public var isPlaying: Bool {
+        playbackState.isPlaying
+    }
+
+    public var isBuffering: Bool {
+        playbackState.isBuffering
+    }
+
+    public var formattedCurrentTime: String {
+        Song.formatDuration(currentTime)
+    }
+
+    public var formattedRemainingTime: String {
+        guard duration > 0 && duration >= currentTime else { return "--:--" }
+        return "-" + Song.formatDuration(duration - currentTime)
+    }
 
     private var pollTask: Task<Void, Never>?
 
@@ -42,11 +58,23 @@ public final class PlaybackCoordinator {
     private func startPolling() {
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                guard let self = self, self.isPlaying else { continue }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard let self = self else { continue }
+                let state = await HawkAudioEngine.shared.playbackState
+                self.playbackState = state
+
+                if let err = state.errorMessage {
+                    self.errorMessage = err
+                }
+
                 let time = await HawkAudioEngine.shared.currentTime()
                 if !time.isNaN && time >= 0 {
                     self.currentTime = time
+                }
+
+                let dur = await HawkAudioEngine.shared.currentDuration()
+                if !dur.isNaN && dur > 0 {
+                    self.duration = dur
                 }
             }
         }
@@ -54,9 +82,9 @@ public final class PlaybackCoordinator {
 
     public func play(song: Song, context: [Song]? = nil) {
         self.currentSong = song
-        self.isLoading = true
+        self.playbackState = .loading(song)
         self.currentTime = 0.0
-        self.duration = song.duration > 0 ? song.duration : 180.0
+        self.duration = song.duration
         self.errorMessage = nil
 
         Task {
@@ -73,12 +101,9 @@ public final class PlaybackCoordinator {
 
             do {
                 try await HawkAudioEngine.shared.play(song: song)
-                self.isPlaying = true
-                self.isLoading = false
             } catch {
-                self.isLoading = false
-                self.errorMessage = "Failed to load stream: \(error.localizedDescription)"
-                print("Playback error for \(song.title): \(error)")
+                self.errorMessage = error.localizedDescription
+                self.playbackState = .failed(song, .playbackFailed(error.localizedDescription))
             }
         }
     }
@@ -87,12 +112,12 @@ public final class PlaybackCoordinator {
         if isPlaying {
             Task {
                 await HawkAudioEngine.shared.pause()
-                self.isPlaying = false
+                self.playbackState = .paused(currentSong ?? Song(id: "", title: "", artist: ""))
             }
         } else {
             Task {
                 await HawkAudioEngine.shared.resume()
-                self.isPlaying = true
+                self.playbackState = .playing(currentSong ?? Song(id: "", title: "", artist: ""))
             }
         }
     }
@@ -109,7 +134,7 @@ public final class PlaybackCoordinator {
             if let nextSong = await QueueManager.shared.next() {
                 play(song: nextSong)
             } else {
-                self.isPlaying = false
+                self.playbackState = .idle
             }
         }
     }

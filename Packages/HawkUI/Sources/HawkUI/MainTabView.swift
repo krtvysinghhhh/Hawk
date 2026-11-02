@@ -44,6 +44,7 @@ public struct MainTabView: View {
                 MiniPlayerView(
                     song: song,
                     isPlaying: coordinator.isPlaying,
+                    isBuffering: coordinator.isBuffering,
                     onPlayPause: { coordinator.togglePlayPause() },
                     onNext: { coordinator.next() },
                     onTap: { coordinator.showNowPlaying = true }
@@ -172,12 +173,12 @@ struct HomeView: View {
 
     private func loadHomeData() async {
         isLoading = true
-        async let ytTask = (try? YouTubeSource().search(query: "Top Global Hits 2026")) ?? []
         async let saavnTask = (try? JioSaavnSource().search(query: "Trending Hits")) ?? []
+        async let ytTask = (try? YouTubeSource().search(query: "Top Global Hits 2026")) ?? []
 
-        let (yt, saavn) = await (ytTask, saavnTask)
-        self.trendingSongs = !yt.isEmpty ? yt : saavn
-        self.topHits = !saavn.isEmpty ? saavn : yt
+        let (saavn, yt) = await (saavnTask, ytTask)
+        self.trendingSongs = TrackDeduplicator.deduplicate(saavn + yt)
+        self.topHits = TrackDeduplicator.deduplicate(yt + saavn)
         self.isLoading = false
     }
 }
@@ -277,10 +278,10 @@ struct GenreDetailView: View {
         }
         .navigationTitle(title)
         .task {
-            async let yt = (try? YouTubeSource().search(query: searchQuery)) ?? []
             async let saavn = (try? JioSaavnSource().search(query: searchQuery)) ?? []
-            let results = await (!yt.isEmpty ? yt : saavn)
-            self.songs = results
+            async let yt = (try? YouTubeSource().search(query: searchQuery)) ?? []
+            let (r1, r2) = await (saavn, yt)
+            self.songs = TrackDeduplicator.deduplicate(r1 + r2)
             self.isLoading = false
         }
     }
@@ -403,19 +404,10 @@ struct SearchView: View {
             case 2:
                 fetched = (try? await JioSaavnSource().search(query: clean)) ?? []
             default:
-                async let yt = (try? YouTubeSource().search(query: clean)) ?? []
                 async let saavn = (try? JioSaavnSource().search(query: clean)) ?? []
-                let (r1, r2) = await (yt, saavn)
-                // Interleave or combine results
-                var combined: [Song] = []
-                let maxLen = max(r1.count, r2.count)
-                for i in 0..<maxLen {
-                    if i < r1.count { combined.append(r1[i]) }
-                    if i < r2.count && !combined.contains(where: { $0.id == r2[i].id }) {
-                        combined.append(r2[i])
-                    }
-                }
-                fetched = combined
+                async let yt = (try? YouTubeSource().search(query: clean)) ?? []
+                let (rSaavn, rYt) = await (saavn, yt)
+                fetched = TrackDeduplicator.deduplicate(rSaavn + rYt)
             }
 
             self.results = fetched

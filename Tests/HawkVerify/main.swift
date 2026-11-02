@@ -71,7 +71,12 @@ func runAllVerifications() async {
     let retrieved = try? await keyStore.readString(key: "auth_token")
     assertTest("Keychain store save and read", retrieved == "secret_value_123")
 
-    // 3. HawkSources & Track Matcher Tests
+    // Test JioSaavn DES Decryption
+    let testEncryptedMedia = "ID2ieOjCrwfgWvL5sXl4B1ImC5QfbsDyF/c5nqlFTXM0C74GbTF9AaylMpcN37HtcTaLl9ufWl/TC2QaaKAJJBw7tS9a8Gtq"
+    let decryptedStreamUrl = try? CryptoUtils.decryptJioSaavnUrl(encryptedUrl: testEncryptedMedia)
+    assertTest("JioSaavn DES Decryption with 38346591 key", decryptedStreamUrl?.contains("saavncdn.com") == true)
+
+    // 3. HawkSources, Deduplication & Track Matcher Tests
     print("\n[3/8] Testing HawkSources & Matcher...")
     let exactScore = TrackMatcher.matchScore(
         titleA: "Blinding Lights",
@@ -93,6 +98,23 @@ func runAllVerifications() async {
     )
     assertTest("TrackMatcher mismatch confidence < 0.3", mismatchScore < 0.3)
 
+    // Deduplication and Version Preservation Test
+    let songOriginalA = Song(id: "saavn_1", title: "Blinding Lights", artist: "The Weeknd", duration: 200.0, artworkURL: URL(string: "https://example.com/art.jpg"))
+    let songOriginalB = Song(id: "yt_1", title: "Blinding Lights (Official Video)", artist: "The Weeknd", duration: 200.0, artworkURL: nil)
+    let songRemix = Song(id: "yt_2", title: "Blinding Lights (Chromatics Remix)", artist: "The Weeknd", duration: 260.0)
+    let songLive = Song(id: "yt_3", title: "Blinding Lights (Live at Super Bowl)", artist: "The Weeknd", duration: 230.0)
+
+    let deduplicated = TrackDeduplicator.deduplicate([songOriginalA, songOriginalB, songRemix, songLive])
+    assertTest("Deduplicator merged duplicate original records (count: 3)", deduplicated.count == 3)
+    assertTest("Deduplicator retained artwork from primary candidate", deduplicated.first?.artworkURL != nil)
+    assertTest("Deduplicator preserved Remix version", deduplicated.contains(where: { $0.version == "Remix" }))
+    assertTest("Deduplicator preserved Live version", deduplicated.contains(where: { $0.version == "Live" }))
+
+    // Artwork Resolver upgrade test
+    let saavnLowRes = URL(string: "https://c.saavncdn.com/077/Blinding-Lights-150x150.jpg")!
+    let upgradedArt = ArtworkResolver.upgradeResolution(of: saavnLowRes)
+    assertTest("ArtworkResolver upgrades 150x150 to 500x500", upgradedArt.absoluteString.contains("500x500"))
+
     let localSource = LocalLibrarySource()
     assertTest("LocalLibrarySource registered", localSource.sourceId == "local")
 
@@ -101,6 +123,8 @@ func runAllVerifications() async {
     assertTest("JioSaavn live search returns results", !saavnResults.isEmpty)
     if let first = saavnResults.first {
         print("  -> JioSaavn top match: '\(first.title)' by '\(first.artist)' (ID: \(first.id))")
+        let resolvedStream = try? await saavnSource.resolveStream(song: first)
+        assertTest("JioSaavn stream resolution produces valid HTTP URL", resolvedStream?.url.scheme == "https")
     }
 
     let ytSource = YouTubeSource()
@@ -163,6 +187,10 @@ func runAllVerifications() async {
     assertTest("LRC parsed 3 lines", parsedLyrics.count == 3)
     assertTest("LRC line 0 timestamp (15.5s)", abs(parsedLyrics[0].timestamp - 15.5) < 0.01)
     assertTest("LRC line 0 text match", parsedLyrics[0].text == "Hello from HAWK")
+
+    let testSongForLyrics = Song(id: "bl_lyrics_test", title: "Blinding Lights", artist: "The Weeknd", duration: 200.0)
+    let fetchedLiveLyrics = try? await LyricsEngine.shared.fetchLyrics(for: testSongForLyrics)
+    assertTest("Live LRCLIB lyrics fetched for 'Blinding Lights'", (fetchedLiveLyrics?.count ?? 0) > 0)
 
     // 8. HawkStats Listening Recorder Tests
     print("\n[8/8] Testing HawkStats Wall-Clock Recorder...")

@@ -102,7 +102,7 @@ public struct NowPlayingView: View {
                 Spacer()
 
                 if showLyrics {
-                    LyricsContainerView(song: song, currentTime: currentTime)
+                    LyricsContainerView(song: song, currentTime: currentTime, isPlaying: isPlaying)
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 } else {
                     // Artwork Presentation
@@ -180,7 +180,8 @@ public struct NowPlayingView: View {
 
                         Spacer()
 
-                        Text("-\(Song.formatDuration(max(0, duration - (isScrubbing ? scrubTime : currentTime))))")
+                        let rem = duration > 0 ? max(0, duration - (isScrubbing ? scrubTime : currentTime)) : 0
+                        Text(duration > 0 ? "-\(Song.formatDuration(rem))" : "--:--")
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .foregroundColor(HawkTheme.textTertiary)
                     }
@@ -212,10 +213,16 @@ public struct NowPlayingView: View {
                                 .frame(width: 72, height: 72)
                                 .shadow(color: HawkTheme.primaryAccent.opacity(0.4), radius: 12, x: 0, y: 6)
 
-                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 30))
-                                .foregroundColor(.white)
-                                .offset(x: isPlaying ? 0 : 2)
+                            if coordinator.isBuffering {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(1.2)
+                            } else {
+                                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.system(size: 30))
+                                    .foregroundColor(.white)
+                                    .offset(x: isPlaying ? 0 : 2)
+                            }
                         }
                     }
                     .accessibilityLabel(isPlaying ? "Pause" : "Play")
@@ -300,6 +307,7 @@ struct AirPlayButton: View {
 struct LyricsContainerView: View {
     let song: Song
     let currentTime: TimeInterval
+    let isPlaying: Bool
     @State private var lyrics: [LyricLine] = []
     @State private var isLoading = true
 
@@ -322,15 +330,15 @@ struct LyricsContainerView: View {
                             Image(systemName: "quote.bubble")
                                 .font(.system(size: 44))
                                 .foregroundColor(HawkTheme.textTertiary)
-                            Text("No synchronized lyrics found")
-                                .font(.headline)
+                            Text("Lyrics aren't available for this track.")
+                                .font(.system(size: 16, weight: .medium))
                                 .foregroundColor(HawkTheme.textSecondary)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 60)
                     } else {
                         ForEach(lyrics) { line in
-                            let isActive = currentActiveLineId == line.id
+                            let isActive = isPlaying && currentActiveLineId == line.id
                             Text(line.text)
                                 .font(.system(size: 24, weight: isActive ? .bold : .medium))
                                 .foregroundColor(isActive ? HawkTheme.textPrimary : HawkTheme.textTertiary.opacity(0.4))
@@ -343,12 +351,13 @@ struct LyricsContainerView: View {
                 .padding(.horizontal, 32)
                 .padding(.vertical, 20)
             }
-            .task {
+            .task(id: song.id) {
+                isLoading = true
                 lyrics = (try? await LyricsEngine.shared.fetchLyrics(for: song)) ?? []
                 isLoading = false
             }
             .onChange(of: currentActiveLineId) { _, newId in
-                if let newId {
+                if isPlaying, let newId {
                     withAnimation {
                         proxy.scrollTo(newId, anchor: .center)
                     }

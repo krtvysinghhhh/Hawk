@@ -19,6 +19,12 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
     public let sourceQuality: AudioQuality?
     public let isVideo: Bool
     public let isLiked: Bool
+    public let isrc: String?
+    public let mediaUri: String?
+    public let sourceId: String?
+    public let version: String?
+    public let providerIdentifiers: [String: String]
+    public let explicitStatus: Bool
 
     public init(
         id: String,
@@ -35,7 +41,13 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
         localFileURL: URL? = nil,
         sourceQuality: AudioQuality? = nil,
         isVideo: Bool = false,
-        isLiked: Bool = false
+        isLiked: Bool = false,
+        isrc: String? = nil,
+        mediaUri: String? = nil,
+        sourceId: String? = nil,
+        version: String? = nil,
+        providerIdentifiers: [String: String] = [:],
+        explicitStatus: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -52,6 +64,16 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
         self.sourceQuality = sourceQuality
         self.isVideo = isVideo
         self.isLiked = isLiked
+        self.isrc = isrc
+        self.mediaUri = mediaUri
+        self.sourceId = sourceId
+        self.version = version ?? Song.extractVersion(from: title)
+        var pIds = providerIdentifiers
+        if let sId = sourceId, pIds[sId] == nil {
+            pIds[sId] = id
+        }
+        self.providerIdentifiers = pIds
+        self.explicitStatus = explicitStatus
     }
 
     /// Creates a copy of this song assigned to a specific queue tier and unique entry ID.
@@ -71,8 +93,51 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
             localFileURL: localFileURL,
             sourceQuality: sourceQuality,
             isVideo: isVideo,
-            isLiked: isLiked
+            isLiked: isLiked,
+            isrc: isrc,
+            mediaUri: mediaUri,
+            sourceId: sourceId,
+            version: version,
+            providerIdentifiers: providerIdentifiers,
+            explicitStatus: explicitStatus
         )
+    }
+
+    /// Extracts version tags such as Live, Remix, Acoustic, Instrumental, Remaster.
+    public static func extractVersion(from text: String) -> String? {
+        let lower = text.lowercased()
+        if lower.contains("live") { return "Live" }
+        if lower.contains("remix") { return "Remix" }
+        if lower.contains("acoustic") { return "Acoustic" }
+        if lower.contains("instrumental") { return "Instrumental" }
+        if lower.contains("remaster") { return "Remaster" }
+        if lower.contains("radio edit") { return "Radio Edit" }
+        return nil
+    }
+
+    /// Computes canonical deduplication key preserving recording versions.
+    public var canonicalKey: String {
+        if let isrc = isrc, !isrc.isEmpty {
+            return "isrc:\(isrc.uppercased())"
+        }
+        let normTitle = title.lowercased()
+            .replacingOccurrences(of: "(official video)", with: "")
+            .replacingOccurrences(of: "[official video]", with: "")
+            .replacingOccurrences(of: "(official audio)", with: "")
+            .replacingOccurrences(of: "[official audio]", with: "")
+            .replacingOccurrences(of: "(lyric video)", with: "")
+            .replacingOccurrences(of: "[hd]", with: "")
+            .replacingOccurrences(of: "[4k]", with: "")
+            .trimmingCharacters(in: .punctuationCharacters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let normArtist = artist.lowercased()
+            .replacingOccurrences(of: "- topic", with: "")
+            .trimmingCharacters(in: .punctuationCharacters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let vTag = version ?? "standard"
+        return "\(normTitle)|\(normArtist)|\(vTag)"
     }
 
     /// Formats a time interval in seconds into mm:ss or hh:mm:ss string.

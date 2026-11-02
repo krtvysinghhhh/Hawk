@@ -6,6 +6,7 @@ import HawkPlayback
 public struct MiniPlayerView: View {
     public let song: Song
     public let isPlaying: Bool
+    public let isBuffering: Bool
     public let onPlayPause: () -> Void
     public let onNext: () -> Void
     public let onTap: () -> Void
@@ -13,12 +14,14 @@ public struct MiniPlayerView: View {
     public init(
         song: Song,
         isPlaying: Bool,
+        isBuffering: Bool = false,
         onPlayPause: @escaping () -> Void,
         onNext: @escaping () -> Void,
         onTap: @escaping () -> Void
     ) {
         self.song = song
         self.isPlaying = isPlaying
+        self.isBuffering = isBuffering
         self.onPlayPause = onPlayPause
         self.onNext = onNext
         self.onTap = onTap
@@ -57,9 +60,15 @@ public struct MiniPlayerView: View {
             // Controls
             HStack(spacing: 16) {
                 Button(action: onPlayPause) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(HawkTheme.textPrimary)
+                    if isBuffering {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: HawkTheme.textPrimary))
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(HawkTheme.textPrimary)
+                    }
                 }
                 .accessibilityLabel(isPlaying ? "Pause" : "Play")
 

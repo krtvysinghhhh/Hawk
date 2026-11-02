@@ -271,7 +271,9 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             title: title,
             artist: artist,
             duration: duration,
-            artworkURL: artworkURL
+            artworkURL: artworkURL,
+            sourceId: sourceId,
+            providerIdentifiers: [sourceId: videoId]
         )
     }
 
