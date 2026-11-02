@@ -127,6 +127,8 @@ public actor SourceResolver {
     public static let shared = SourceResolver()
 
     private var providers: [MusicSourceProvider] = []
+    private var streamCache: [String: (stream: SourceStream, timestamp: Date)] = [:]
+    private let cacheTTL: TimeInterval = 3600 // 1 hour
 
     public init(providers: [MusicSourceProvider] = [JioSaavnSource(), YouTubeSource(), LocalLibrarySource()]) {
         self.providers = providers
@@ -138,16 +140,25 @@ public actor SourceResolver {
 
     /// Resolves an openable audio stream, attempting fallback across providers if needed.
     public func resolve(song: Song, qualityCeiling: AudioQuality = .high) async throws -> SourceStream {
+        // Fast path: memory cache hit
+        let cacheKey = song.canonicalKey
+        if let cached = streamCache[cacheKey], Date().timeIntervalSince(cached.timestamp) < cacheTTL {
+            return cached.stream
+        }
+
         // 1. Local file path
         if song.localFileURL != nil || song.id.hasPrefix("file://") {
             if let localProvider = providers.first(where: { $0.sourceId == "local" }) {
-                return try await localProvider.resolveStream(song: song, qualityCeiling: qualityCeiling)
+                let stream = try await localProvider.resolveStream(song: song, qualityCeiling: qualityCeiling)
+                streamCache[cacheKey] = (stream, Date())
+                return stream
             }
         }
 
         // 2. Direct encrypted media URI fast-path (JioSaavn)
         if let jio = providers.first(where: { $0.sourceId == "jiosaavn" }) {
             if let stream = try? await jio.resolveStream(song: song, qualityCeiling: qualityCeiling) {
+                streamCache[cacheKey] = (stream, Date())
                 return stream
             }
         }
@@ -155,6 +166,7 @@ public actor SourceResolver {
         // 3. Provider-specific resolution if designated
         if let targetId = song.sourceId, let targetProv = providers.first(where: { $0.sourceId == targetId }) {
             if let stream = try? await targetProv.resolveStream(song: song, qualityCeiling: qualityCeiling) {
+                streamCache[cacheKey] = (stream, Date())
                 return stream
             }
         }
@@ -163,6 +175,7 @@ public actor SourceResolver {
         for provider in providers {
             do {
                 let stream = try await provider.resolveStream(song: song, qualityCeiling: qualityCeiling)
+                streamCache[cacheKey] = (stream, Date())
                 return stream
             } catch {
                 continue

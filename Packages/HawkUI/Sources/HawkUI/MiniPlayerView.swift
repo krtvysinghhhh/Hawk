@@ -39,8 +39,8 @@ public struct MiniPlayerView: View {
                 }
             }
             .frame(width: 44, height: 44)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .shadow(color: .black.opacity(0.4), radius: 6, x: 0, y: 3)
 
             // Song Info
             VStack(alignment: .leading, spacing: 2) {
@@ -60,35 +60,36 @@ public struct MiniPlayerView: View {
             // Controls
             HStack(spacing: 16) {
                 Button(action: onPlayPause) {
-                    if isBuffering {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: HawkTheme.textPrimary))
-                            .frame(width: 20, height: 20)
-                    } else {
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(HawkTheme.textPrimary)
+                    ZStack {
+                        if isBuffering {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: HawkTheme.primaryAccent))
+                                .frame(width: 20, height: 20)
+                        } else {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(isPlaying ? HawkTheme.primaryAccent : HawkTheme.textPrimary)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
                     }
+                    .frame(width: 32, height: 32)
                 }
+                .hawkPressEffect()
                 .accessibilityLabel(isPlaying ? "Pause" : "Play")
 
                 Button(action: onNext) {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 18))
                         .foregroundColor(HawkTheme.textSecondary)
+                        .frame(width: 32, height: 32)
                 }
+                .hawkPressEffect()
                 .accessibilityLabel("Next Track")
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(HawkTheme.glassMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 10, x: 0, y: 4)
+        .hawkLiquidGlass(cornerRadius: 16, strokeOpacity: 0.22)
         .padding(.horizontal, 12)
         .onTapGesture(perform: onTap)
     }

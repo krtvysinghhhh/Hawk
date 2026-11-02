@@ -102,8 +102,13 @@ public struct NowPlayingView: View {
                 Spacer()
 
                 if showLyrics {
-                    LyricsContainerView(song: song, currentTime: currentTime, isPlaying: isPlaying)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    LyricsContainerView(
+                        song: song,
+                        currentTime: currentTime,
+                        isPlaying: isPlaying,
+                        onSeek: onSeek
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 } else {
                     // Artwork Presentation
                     AsyncImage(url: song.artworkURL) { phase in
@@ -119,8 +124,12 @@ public struct NowPlayingView: View {
                         }
                     }
                     .frame(width: 320, height: 320)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .black.opacity(0.4), radius: 24, x: 0, y: 12)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
+                    )
+                    .shadow(color: .black.opacity(0.45), radius: 28, x: 0, y: 14)
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
 
@@ -197,6 +206,7 @@ public struct NowPlayingView: View {
                             .font(.system(size: 20))
                             .foregroundColor(coordinator.isShuffleActive ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
                     }
+                    .hawkPressEffect()
                     .accessibilityLabel("Shuffle")
 
                     Button(action: onPrevious) {
@@ -204,6 +214,7 @@ public struct NowPlayingView: View {
                             .font(.system(size: 28))
                             .foregroundColor(HawkTheme.textPrimary)
                     }
+                    .hawkPressEffect()
                     .accessibilityLabel("Previous Track")
 
                     Button(action: onPlayPause) {
@@ -222,9 +233,11 @@ public struct NowPlayingView: View {
                                     .font(.system(size: 30))
                                     .foregroundColor(.white)
                                     .offset(x: isPlaying ? 0 : 2)
+                                    .contentTransition(.symbolEffect(.replace))
                             }
                         }
                     }
+                    .hawkPressEffect()
                     .accessibilityLabel(isPlaying ? "Pause" : "Play")
 
                     Button(action: onNext) {
@@ -232,6 +245,7 @@ public struct NowPlayingView: View {
                             .font(.system(size: 28))
                             .foregroundColor(HawkTheme.textPrimary)
                     }
+                    .hawkPressEffect()
                     .accessibilityLabel("Next Track")
 
                     Button {
@@ -241,30 +255,36 @@ public struct NowPlayingView: View {
                             .font(.system(size: 20))
                             .foregroundColor(coordinator.repeatMode != .off ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
                     }
+                    .hawkPressEffect()
                     .accessibilityLabel("Repeat")
                 }
                 .padding(.vertical, 6)
 
                 // Bottom Quick Action Bar (Lyrics, AirPlay, Queue)
-                HStack(spacing: 40) {
+                HStack(spacing: 36) {
                     Button(action: { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showLyrics.toggle() } }) {
                         Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
-                            .font(.system(size: 22))
-                            .foregroundColor(showLyrics ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
+                            .font(.system(size: 20))
+                            .foregroundColor(showLyrics ? HawkTheme.primaryAccent : HawkTheme.textSecondary)
                     }
+                    .hawkPressEffect()
                     .accessibilityLabel("Toggle Lyrics")
 
                     AirPlayButton()
-                        .frame(width: 24, height: 24)
+                        .frame(width: 22, height: 22)
 
                     Button(action: { showQueue.toggle() }) {
                         Image(systemName: "list.bullet")
-                            .font(.system(size: 22))
-                            .foregroundColor(HawkTheme.textTertiary)
+                            .font(.system(size: 20))
+                            .foregroundColor(HawkTheme.textSecondary)
                     }
+                    .hawkPressEffect()
                     .accessibilityLabel("Playback Queue")
                 }
-                .padding(.bottom, 24)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 12)
+                .hawkLiquidGlass(cornerRadius: 24, strokeOpacity: 0.16)
+                .padding(.bottom, 20)
             }
         }
         .sheet(isPresented: $showQueue) {
@@ -303,71 +323,136 @@ struct AirPlayButton: View {
 }
 #endif
 
-/// Embedded synchronized lyrics panel with auto-scroll and line highlighting.
+/// Embedded synchronized lyrics panel with tap-to-seek, auto-scroll, and re-center controls.
 struct LyricsContainerView: View {
     let song: Song
     let currentTime: TimeInterval
     let isPlaying: Bool
+    let onSeek: (TimeInterval) -> Void
+
     @State private var lyrics: [LyricLine] = []
     @State private var isLoading = true
+    @State private var isUserScrolling = false
+
+    private var isSynchronized: Bool {
+        lyrics.contains(where: { $0.timestamp > 0.05 })
+    }
+
+    private var currentActiveLineId: String? {
+        guard isSynchronized else { return nil }
+        return lyrics.last(where: { currentTime >= $0.timestamp })?.id
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    if isLoading {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                                .tint(HawkTheme.primaryAccent)
-                            Text("Fetching synchronized lyrics...")
-                                .font(.system(size: 15))
-                                .foregroundColor(HawkTheme.textTertiary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 60)
-                    } else if lyrics.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "quote.bubble")
-                                .font(.system(size: 44))
-                                .foregroundColor(HawkTheme.textTertiary)
-                            Text("Lyrics aren't available for this track.")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(HawkTheme.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 60)
-                    } else {
-                        ForEach(lyrics) { line in
-                            let isActive = isPlaying && currentActiveLineId == line.id
-                            Text(line.text)
-                                .font(.system(size: 24, weight: isActive ? .bold : .medium))
-                                .foregroundColor(isActive ? HawkTheme.textPrimary : HawkTheme.textTertiary.opacity(0.4))
-                                .scaleEffect(isActive ? 1.03 : 1.0, anchor: .leading)
-                                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isActive)
+            ZStack(alignment: .bottom) {
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 22) {
+                        if isLoading {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                    .tint(HawkTheme.primaryAccent)
+                                Text("Fetching synchronized lyrics...")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(HawkTheme.textTertiary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
+                        } else if lyrics.isEmpty {
+                            VStack(spacing: 12) {
+                                Image(systemName: "quote.bubble")
+                                    .font(.system(size: 44))
+                                    .foregroundColor(HawkTheme.textTertiary)
+                                Text("Lyrics aren't available for this track.")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(HawkTheme.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
+                        } else {
+                            ForEach(lyrics) { line in
+                                let isActive = isPlaying && isSynchronized && currentActiveLineId == line.id
+                                Button {
+                                    if isSynchronized {
+                                        onSeek(line.timestamp)
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                            isUserScrolling = false
+                                            proxy.scrollTo(line.id, anchor: .center)
+                                        }
+                                    }
+                                } label: {
+                                    Text(line.text)
+                                        .font(.system(size: isSynchronized ? 24 : 19, weight: isActive ? .bold : .medium))
+                                        .foregroundColor(
+                                            isSynchronized
+                                                ? (isActive ? HawkTheme.textPrimary : HawkTheme.textTertiary.opacity(0.4))
+                                                : HawkTheme.textSecondary
+                                        )
+                                        .multilineTextAlignment(.leading)
+                                        .scaleEffect(isActive ? 1.04 : 1.0, anchor: .leading)
+                                        .blur(radius: isSynchronized && !isActive ? 0.3 : 0)
+                                        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isActive)
+                                }
+                                .buttonStyle(.plain)
                                 .id(line.id)
+                            }
                         }
                     }
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 32)
-                .padding(.vertical, 20)
+                .simultaneousGesture(
+                    DragGesture().onChanged { _ in
+                        if !isUserScrolling {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isUserScrolling = true
+                            }
+                        }
+                    }
+                )
+
+                // "Sync to Audio" Re-center floating pill when user has manually scrolled away
+                if isUserScrolling && isSynchronized && currentActiveLineId != nil {
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            isUserScrolling = false
+                            if let activeId = currentActiveLineId {
+                                proxy.scrollTo(activeId, anchor: .center)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Sync to Audio")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(HawkTheme.textPrimary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .hawkLiquidGlass(cornerRadius: 20, strokeOpacity: 0.25)
+                        .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                    }
+                    .hawkPressEffect()
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .task(id: song.id) {
                 isLoading = true
+                isUserScrolling = false
                 lyrics = (try? await LyricsEngine.shared.fetchLyrics(for: song)) ?? []
                 isLoading = false
             }
             .onChange(of: currentActiveLineId) { _, newId in
-                if isPlaying, let newId {
-                    withAnimation {
+                if isPlaying && !isUserScrolling, let newId {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         proxy.scrollTo(newId, anchor: .center)
                     }
                 }
             }
         }
-    }
-
-    private var currentActiveLineId: String? {
-        lyrics.last(where: { currentTime >= $0.timestamp })?.id
     }
 }
 

@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import MediaPlayer
 import HawkCore
 import HawkSources
@@ -21,6 +21,9 @@ public actor HawkAudioEngine {
     private var stallObserverToken: Any?
     private var itemStatusObserver: NSKeyValueObservation?
     private var crossfadeTask: Task<Void, Never>?
+    private var preloadTask: Task<Void, Never>?
+    private var preloadedSongId: String?
+    private var preloadedItem: AVPlayerItem?
 
     public var onTrackFinished: (@Sendable () async -> Void)?
 
@@ -50,8 +53,15 @@ public actor HawkAudioEngine {
         playbackState = .loading(song)
 
         do {
-            let stream = try await SourceResolver.shared.resolve(song: song)
-            let playerItem = AVPlayerItem(url: stream.url)
+            let playerItem: AVPlayerItem
+            if preloadedSongId == song.id, let cached = preloadedItem {
+                playerItem = cached
+                preloadedSongId = nil
+                preloadedItem = nil
+            } else {
+                let stream = try await SourceResolver.shared.resolve(song: song)
+                playerItem = AVPlayerItem(url: stream.url)
+            }
 
             setupItemObservers(for: playerItem, song: song)
 
@@ -67,6 +77,11 @@ public actor HawkAudioEngine {
                 playbackState = .buffering(song)
             }
             observeItemEnd(item: playerItem)
+
+            // Trigger background predictive preload for the next queued track
+            Task { [weak self] in
+                await self?.triggerPredictivePreload()
+            }
         } catch let err as HawkError {
             playbackState = .failed(song, err)
             throw err
@@ -75,6 +90,26 @@ public actor HawkAudioEngine {
             playbackState = .failed(song, hawkErr)
             throw hawkErr
         }
+    }
+
+    /// Background preloader warming up the next sequential track's stream and audio buffer.
+    public func triggerPredictivePreload() async {
+        preloadTask?.cancel()
+        guard let nextSong = await QueueManager.shared.peekNext() else { return }
+
+        preloadTask = Task { [weak self] in
+            guard let stream = try? await SourceResolver.shared.resolve(song: nextSong) else { return }
+            if Task.isCancelled { return }
+            let item = AVPlayerItem(url: stream.url)
+            _ = try? await item.asset.load(.isPlayable)
+            guard let self = self, !Task.isCancelled else { return }
+            await self.setPreloadedItem(songId: nextSong.id, item: item)
+        }
+    }
+
+    private func setPreloadedItem(songId: String, item: AVPlayerItem) {
+        self.preloadedSongId = songId
+        self.preloadedItem = item
     }
 
     private func setupItemObservers(for item: AVPlayerItem, song: Song) {

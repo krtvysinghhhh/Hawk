@@ -85,6 +85,24 @@ public actor QueueManager {
         return nil
     }
 
+    /// Returns the upcoming track without advancing the queue position, enabling predictive preloading.
+    public func peekNext() -> Song? {
+        let timeline = fullTimeline
+        guard !timeline.isEmpty else { return nil }
+
+        if repeatMode == .one {
+            return currentSong
+        }
+
+        if currentIndex + 1 < timeline.count {
+            return timeline[currentIndex + 1]
+        } else if repeatMode == .all {
+            return timeline.first
+        }
+
+        return nil
+    }
+
     public func previous() -> Song? {
         let timeline = fullTimeline
         guard !timeline.isEmpty else { return nil }

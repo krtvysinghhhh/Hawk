@@ -91,78 +91,195 @@ public struct MainTabView: View {
 // MARK: - Live Home View
 struct HomeView: View {
     @State private var trendingSongs: [Song] = []
+    @State private var madeForYouSongs: [Song] = []
+    @State private var jumpBackInSongs: [Song] = []
     @State private var topHits: [Song] = []
+    @State private var featuredSong: Song?
     @State private var isLoading = true
     private var coordinator = PlaybackCoordinator.shared
+
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return "Good morning"
+        case 12..<17: return "Good afternoon"
+        default: return "Good evening"
+        }
+    }
+
+    private let popularArtists: [(name: String, query: String, icon: String)] = [
+        ("The Weeknd", "The Weeknd hits", "person.circle.fill"),
+        ("Arijit Singh", "Arijit Singh romantic hits", "person.circle.fill"),
+        ("Ed Sheeran", "Ed Sheeran hits", "person.circle.fill"),
+        ("Taylor Swift", "Taylor Swift hits", "person.circle.fill"),
+        ("Drake", "Drake hits", "person.circle.fill"),
+        ("Billie Eilish", "Billie Eilish hits", "person.circle.fill")
+    ]
 
     var body: some View {
         NavigationStack {
             ZStack {
                 HawkTheme.darkBackground.ignoresSafeArea()
+
                 if isLoading && trendingSongs.isEmpty {
                     VStack(spacing: 16) {
                         ProgressView()
                             .tint(HawkTheme.primaryAccent)
                             .scaleEffect(1.2)
-                        Text("Loading Music...")
+                        Text("Curating Your Music...")
                             .foregroundColor(HawkTheme.textSecondary)
                             .font(.subheadline)
                     }
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 24) {
-                            // Section 1: Trending Now (Horizontal Cards)
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Trending Now")
-                                    .font(.system(size: 22, weight: .bold))
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 28) {
+                            // Top Dynamic Greeting Header
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(greeting)
+                                    .font(.system(size: 32, weight: .bold))
                                     .foregroundColor(HawkTheme.textPrimary)
-                                    .padding(.horizontal)
+                                Text("Handcrafted for you on HAWK")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(HawkTheme.textTertiary)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
+
+                            // Editorial Featured Hero Card
+                            if let hero = featuredSong {
+                                Button {
+                                    coordinator.play(song: hero)
+                                } label: {
+                                    FeaturedHeroView(song: hero)
+                                }
+                                .buttonStyle(.plain)
+                                .hawkPressEffect()
+                                .padding(.horizontal, 20)
+                            }
+
+                            // Section 1: Jump Back In / Favorites
+                            if !jumpBackInSongs.isEmpty {
+                                carouselSection(
+                                    title: "Jump Back In",
+                                    subtitle: "Pick up where you left off",
+                                    songs: jumpBackInSongs
+                                )
+                            }
+
+                            // Section 2: Made For You (1:1 Artwork Carousel)
+                            if !madeForYouSongs.isEmpty {
+                                carouselSection(
+                                    title: "Made For You",
+                                    subtitle: "Personalised daily mix",
+                                    songs: madeForYouSongs
+                                )
+                            }
+
+                            // Section 3: Popular Artists (Circular Avatars)
+                            VStack(alignment: .leading, spacing: 14) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Favorite Artists")
+                                        .font(.system(size: 22, weight: .bold))
+                                        .foregroundColor(HawkTheme.textPrimary)
+                                    Text("Explore their complete catalogues")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(HawkTheme.textTertiary)
+                                }
+                                .padding(.horizontal, 20)
 
                                 ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 16) {
-                                        ForEach(trendingSongs) { song in
+                                    HStack(spacing: 18) {
+                                        ForEach(popularArtists, id: \.name) { artist in
+                                            Button {
+                                                Task {
+                                                    let results = (try? await JioSaavnSource().search(query: artist.query)) ?? []
+                                                    if let first = results.first {
+                                                        coordinator.play(song: first)
+                                                    }
+                                                }
+                                            } label: {
+                                                VStack(spacing: 8) {
+                                                    ZStack {
+                                                        Circle()
+                                                            .fill(LinearGradient(
+                                                                colors: [HawkTheme.cardBackground, HawkTheme.primaryAccent.opacity(0.35)],
+                                                                startPoint: .topLeading,
+                                                                endPoint: .bottomTrailing
+                                                            ))
+                                                            .frame(width: 80, height: 80)
+                                                            .overlay(
+                                                                Circle()
+                                                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                                                            )
+                                                            .shadow(color: .black.opacity(0.3), radius: 6, y: 3)
+
+                                                        Image(systemName: "music.mic")
+                                                            .font(.system(size: 28))
+                                                            .foregroundColor(HawkTheme.textPrimary)
+                                                    }
+
+                                                    Text(artist.name)
+                                                        .font(.system(size: 12, weight: .semibold))
+                                                        .foregroundColor(HawkTheme.textPrimary)
+                                                        .lineLimit(1)
+                                                }
+                                                .frame(width: 88)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .hawkPressEffect()
+                                        }
+                                    }
+                                    .padding(.horizontal, 20)
+                                }
+                            }
+
+                            // Section 4: Global Hits & Trending
+                            if !trendingSongs.isEmpty {
+                                carouselSection(
+                                    title: "Trending Worldwide",
+                                    subtitle: "What listeners are playing right now",
+                                    songs: trendingSongs
+                                )
+                            }
+
+                            // Section 5: Top Charts List
+                            if !topHits.isEmpty {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Top Charts")
+                                            .font(.system(size: 22, weight: .bold))
+                                            .foregroundColor(HawkTheme.textPrimary)
+                                        Text("Most played this week")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(HawkTheme.textTertiary)
+                                    }
+                                    .padding(.horizontal, 20)
+
+                                    LazyVStack(spacing: 6) {
+                                        ForEach(topHits.prefix(10)) { song in
                                             Button {
                                                 coordinator.play(song: song)
                                             } label: {
-                                                SongCardView(song: song)
+                                                SongRowView(song: song)
+                                                    .padding(.horizontal, 20)
+                                                    .padding(.vertical, 4)
                                             }
                                             .buttonStyle(.plain)
                                         }
                                     }
-                                    .padding(.horizontal)
-                                }
-                            }
-
-                            // Section 2: Top Charts (Vertical List)
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Top Hits & Charts")
-                                    .font(.system(size: 22, weight: .bold))
-                                    .foregroundColor(HawkTheme.textPrimary)
-                                    .padding(.horizontal)
-
-                                LazyVStack(spacing: 6) {
-                                    ForEach(topHits) { song in
-                                        Button {
-                                            coordinator.play(song: song)
-                                        } label: {
-                                            SongRowView(song: song)
-                                                .padding(.horizontal)
-                                                .padding(.vertical, 4)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
                                 }
                             }
                         }
-                        .padding(.top, 16)
-                        .padding(.bottom, 100) // Padding for docked miniplayer
+                        .padding(.top, 12)
+                        .padding(.bottom, 110) // Padding for docked miniplayer
                     }
                     .refreshable {
                         await loadHomeData()
                     }
                 }
             }
-            .navigationTitle("Listen Now")
+            .navigationTitle("")
+            .navigationBarHidden(true)
             .task {
                 if trendingSongs.isEmpty {
                     await loadHomeData()
@@ -171,15 +288,133 @@ struct HomeView: View {
         }
     }
 
+    @ViewBuilder
+    private func carouselSection(title: String, subtitle: String, songs: [Song]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(HawkTheme.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundColor(HawkTheme.textTertiary)
+            }
+            .padding(.horizontal, 20)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(songs) { song in
+                        Button {
+                            coordinator.play(song: song)
+                        } label: {
+                            SongCardView(song: song)
+                        }
+                        .buttonStyle(.plain)
+                        .hawkPressEffect()
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+
     private func loadHomeData() async {
         isLoading = true
-        async let saavnTask = (try? JioSaavnSource().search(query: "Trending Hits")) ?? []
-        async let ytTask = (try? YouTubeSource().search(query: "Top Global Hits 2026")) ?? []
 
-        let (saavn, yt) = await (saavnTask, ytTask)
-        self.trendingSongs = TrackDeduplicator.deduplicate(saavn + yt)
+        // Load favorites from local PlaylistStore
+        let favs = await PlaylistStore.shared.getFavorites().songs
+
+        async let saavnTrending = (try? JioSaavnSource().search(query: "Top Hits 2026")) ?? []
+        async let ytTrending = (try? YouTubeSource().search(query: "Top Global Hits")) ?? []
+        async let popMix = (try? JioSaavnSource().search(query: "Global Pop Hits")) ?? []
+
+        let (saavn, yt, pop) = await (saavnTrending, ytTrending, popMix)
+
+        let dedupedTrending = TrackDeduplicator.deduplicate(saavn + yt)
+        let dedupedPop = TrackDeduplicator.deduplicate(pop + yt)
+
+        self.trendingSongs = dedupedTrending
+        self.madeForYouSongs = dedupedPop
         self.topHits = TrackDeduplicator.deduplicate(yt + saavn)
+        self.featuredSong = dedupedTrending.first ?? dedupedPop.first
+
+        // If user has favorites, show them in Jump Back In; otherwise show first 5 curated tracks
+        self.jumpBackInSongs = !favs.isEmpty ? favs : Array(dedupedTrending.prefix(6))
         self.isLoading = false
+    }
+}
+
+/// Editorial Featured Hero banner at the top of the Home view.
+struct FeaturedHeroView: View {
+    let song: Song
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            // Background Artwork
+            AsyncImage(url: song.artworkURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                default:
+                    Rectangle()
+                        .fill(HawkTheme.cardBackground)
+                }
+            }
+            .frame(height: 220)
+            .clipped()
+
+            // Dark gradient scrim for legibility
+            LinearGradient(
+                colors: [Color.clear, Color.black.opacity(0.4), Color.black.opacity(0.85)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            // Content overlay
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("FEATURED TRACK")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundColor(HawkTheme.primaryAccent)
+                        .tracking(1.2)
+
+                    Text(song.title)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    Text(song.artist)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                // Floating Liquid Glass Play Button
+                ZStack {
+                    Circle()
+                        .fill(HawkTheme.primaryAccent)
+                        .frame(width: 48, height: 48)
+                        .shadow(color: HawkTheme.primaryAccent.opacity(0.5), radius: 8, y: 4)
+
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                        .offset(x: 1.5)
+                }
+            }
+            .padding(18)
+        }
+        .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.35), radius: 14, y: 7)
     }
 }
 
@@ -416,12 +651,12 @@ struct SearchView: View {
     }
 }
 
-// MARK: - Song Card Component
+// MARK: - Song Card Component (1:1 Square Artwork)
 struct SongCardView: View {
     let song: Song
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
                 if let url = song.artworkURL {
                     AsyncImage(url: url) { phase in
@@ -434,18 +669,30 @@ struct SongCardView: View {
                             cardPlaceholder
                         }
                     }
-                    .frame(width: 145, height: 145)
-                    .cornerRadius(12)
-                    .clipped()
+                    .frame(width: 160, height: 160)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
+                    )
+                    .shadow(color: .black.opacity(0.28), radius: 8, y: 4)
                 } else {
                     cardPlaceholder
                 }
 
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 28))
-                    .foregroundColor(HawkTheme.primaryAccent)
-                    .background(Circle().fill(Color.black.opacity(0.6)))
-                    .padding(8)
+                // Mini Liquid Glass Play Accent
+                ZStack {
+                    Circle()
+                        .fill(HawkTheme.primaryAccent)
+                        .frame(width: 34, height: 34)
+                        .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
+
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white)
+                        .offset(x: 1)
+                }
+                .padding(10)
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -455,23 +702,34 @@ struct SongCardView: View {
                     .lineLimit(1)
 
                 Text(song.artist)
-                    .font(.system(size: 12))
-                    .foregroundColor(HawkTheme.textSecondary)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(HawkTheme.textTertiary)
                     .lineLimit(1)
             }
         }
-        .frame(width: 145)
+        .frame(width: 160)
     }
 
     private var cardPlaceholder: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(HawkTheme.cardBackground)
-            .frame(width: 145, height: 145)
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [HawkTheme.cardBackground, HawkTheme.cardBackground.opacity(0.6)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: 160, height: 160)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.8)
+            )
             .overlay(
                 Image(systemName: "music.note")
-                    .font(.system(size: 32))
-                    .foregroundColor(.white.opacity(0.3))
+                    .font(.system(size: 38))
+                    .foregroundColor(.white.opacity(0.25))
             )
+            .shadow(color: .black.opacity(0.28), radius: 8, y: 4)
     }
 }
 
