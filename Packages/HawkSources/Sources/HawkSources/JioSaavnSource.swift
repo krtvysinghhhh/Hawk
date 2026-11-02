@@ -93,7 +93,7 @@ public final class JioSaavnSource: MusicSourceProvider, @unchecked Sendable {
 
         return results.compactMap { dict -> Song? in
             guard let id = dict["id"] as? String,
-                  let title = (dict["title"] as? String)?
+                  let titleRaw = (dict["title"] as? String)?
                     .replacingOccurrences(of: "&quot;", with: "\"")
                     .replacingOccurrences(of: "&amp;", with: "&")
                     .replacingOccurrences(of: "&#039;", with: "'"),
@@ -101,7 +101,10 @@ public final class JioSaavnSource: MusicSourceProvider, @unchecked Sendable {
                 return nil
             }
 
-            let artist = (dict["subtitle"] as? String) ?? (moreInfo["singers"] as? String) ?? "Unknown Artist"
+            let title = titleRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+
+            let artist = extractArtist(from: dict, moreInfo: moreInfo)
             let durationStr = moreInfo["duration"] as? String ?? "0"
             let duration = Double(durationStr) ?? 0
 
@@ -132,5 +135,43 @@ public final class JioSaavnSource: MusicSourceProvider, @unchecked Sendable {
                 explicitStatus: isExplicit
             )
         }
+    }
+
+    private func extractArtist(from dict: [String: Any], moreInfo: [String: Any]) -> String {
+        if let artistMap = moreInfo["artistMap"] as? [String: Any] {
+            if let primaryList = artistMap["primary_artists"] as? [[String: Any]], !primaryList.isEmpty {
+                let names = primaryList.compactMap { $0["name"] as? String }
+                    .map { $0.replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&amp;", with: "&") }
+                    .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                if !names.isEmpty {
+                    return names.joined(separator: ", ")
+                }
+            }
+            if let artistsList = artistMap["artists"] as? [[String: Any]] {
+                let singers = artistsList.filter { ($0["role"] as? String) == "singer" || ($0["role"] as? String) == "music" }
+                let names = singers.compactMap { $0["name"] as? String }
+                    .map { $0.replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&amp;", with: "&") }
+                    .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                if !names.isEmpty {
+                    return names.joined(separator: ", ")
+                }
+            }
+        }
+        if let primary = (moreInfo["primary_artists"] as? String)?.trimmingCharacters(in: .whitespaces), !primary.isEmpty {
+            return primary
+        }
+        if let singers = (moreInfo["singers"] as? String)?.trimmingCharacters(in: .whitespaces), !singers.isEmpty {
+            return singers
+        }
+        if let music = (moreInfo["music"] as? String)?.trimmingCharacters(in: .whitespaces), !music.isEmpty {
+            return music
+        }
+        if let subtitle = (dict["subtitle"] as? String)?.trimmingCharacters(in: .whitespaces), !subtitle.isEmpty {
+            return subtitle
+        }
+        if let desc = (dict["header_desc"] as? String)?.trimmingCharacters(in: .whitespaces), !desc.isEmpty {
+            return desc
+        }
+        return "Unknown Artist"
     }
 }

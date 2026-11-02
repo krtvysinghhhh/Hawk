@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import HawkCore
 import HawkSecurity
 import HawkNetworking
@@ -123,8 +124,39 @@ func runAllVerifications() async {
     assertTest("JioSaavn live search returns results", !saavnResults.isEmpty)
     if let first = saavnResults.first {
         print("  -> JioSaavn top match: '\(first.title)' by '\(first.artist)' (ID: \(first.id))")
+        assertTest("Tum Hi Ho artist extracted and non-empty", !first.artist.isEmpty && first.artist.contains("Arijit Singh"))
         let resolvedStream = try? await saavnSource.resolveStream(song: first)
         assertTest("JioSaavn stream resolution produces valid HTTP URL", resolvedStream?.url.scheme == "https")
+    }
+
+    // Version penalty test in TrackMatcher
+    let originalVsRemixScore = TrackMatcher.matchScore(
+        titleA: "Blinding Lights",
+        artistA: "The Weeknd",
+        durationA: 200.0,
+        versionA: "Original",
+        titleB: "Blinding Lights (Remix)",
+        artistB: "The Weeknd",
+        durationB: 260.0,
+        versionB: "Remix"
+    )
+    assertTest("TrackMatcher penalizes version discrepancy (< 0.3)", originalVsRemixScore < 0.3)
+
+    // Quality check on the 6 mandatory queries
+    print("  Testing 6 core discovery queries:")
+    let coreQueries = [
+        ("Blinding Lights The Weeknd", "The Weeknd"),
+        ("Starboy The Weeknd", "The Weeknd"),
+        ("Die For You The Weeknd", "The Weeknd"),
+        ("Perfect Ed Sheeran", "Ed Sheeran"),
+        ("Tum Hi Ho Arijit Singh", "Arijit Singh"),
+        ("Apna Bana Le Arijit Singh", "Arijit Singh")
+    ]
+    for (q, expectedArtist) in coreQueries {
+        if let res = try? await saavnSource.search(query: q), let top = res.first {
+            let pass = top.artist.lowercased().contains(expectedArtist.lowercased())
+            assertTest("Query '\(q)' top artist matches '\(expectedArtist)'", pass)
+        }
     }
 
     let ytSource = YouTubeSource()
@@ -191,6 +223,48 @@ func runAllVerifications() async {
     let testSongForLyrics = Song(id: "bl_lyrics_test", title: "Blinding Lights", artist: "The Weeknd", duration: 200.0)
     let fetchedLiveLyrics = try? await LyricsEngine.shared.fetchLyrics(for: testSongForLyrics)
     assertTest("Live LRCLIB lyrics fetched for 'Blinding Lights'", (fetchedLiveLyrics?.count ?? 0) > 0)
+
+    let bogusSong = Song(id: "bogus_test", title: "NonExistentTrackXYZ987", artist: "FakeArtistQWE123", duration: 120.0)
+    let bogusLyrics = try? await LyricsEngine.shared.fetchLyrics(for: bogusSong)
+    assertTest("LyricsEngine rejects non-existent / mismatched tracks", bogusLyrics == nil || bogusLyrics!.isEmpty)
+
+    // Real Native AVPlayer Audio Playback Engine Test
+    print("\n  Testing Native AVPlayer Hardware Pipeline...")
+    let testAudioURL = URL(string: "https://aac.saavncdn.com/077/0b02a92687d1ae3369b6859f44872e52_320.mp4")!
+    let playerItem = AVPlayerItem(url: testAudioURL)
+    let nativePlayer = AVPlayer(playerItem: playerItem)
+
+    var isReady = false
+    let readyObs = playerItem.observe(\.status, options: [.new, .initial]) { obsItem, _ in
+        if obsItem.status == .readyToPlay { isReady = true }
+    }
+    let waitStart = Date()
+    while !isReady && Date().timeIntervalSince(waitStart) < 4.0 {
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    assertTest("AVPlayerItem status transitions to .readyToPlay", isReady)
+    assertTest("AVPlayerItem duration is finite and valid (> 100s)", playerItem.duration.seconds > 100.0)
+
+    nativePlayer.play()
+    let playStart = Date()
+    while nativePlayer.currentTime().seconds < 0.5 && Date().timeIntervalSince(playStart) < 3.0 {
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    assertTest("AVPlayer rate becomes > 0 (playing)", nativePlayer.rate > 0)
+    assertTest("Playback time genuinely advances", nativePlayer.currentTime().seconds > 0)
+
+    nativePlayer.pause()
+    assertTest("AVPlayer pause stops playback (rate == 0)", nativePlayer.rate == 0)
+
+    var seekComplete = false
+    nativePlayer.seek(to: CMTime(seconds: 30.0, preferredTimescale: 1000)) { _ in
+        seekComplete = true
+    }
+    let seekStart = Date()
+    while !seekComplete && Date().timeIntervalSince(seekStart) < 2.0 {
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    assertTest("AVPlayer seeking updates playback position (~30s)", abs(nativePlayer.currentTime().seconds - 30.0) < 1.0)
 
     // 8. HawkStats Listening Recorder Tests
     print("\n[8/8] Testing HawkStats Wall-Clock Recorder...")

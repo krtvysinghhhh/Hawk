@@ -4,15 +4,37 @@ import HawkCore
 /// Intelligent track matching engine with confidence scoring.
 public enum TrackMatcher {
 
-    /// Computes match confidence between 0.0 and 1.0.
+    /// Minimum confidence threshold required to consider two tracks a verified match.
+    public static let confidenceThreshold: Double = 0.70
+
+    /// Computes match confidence between 0.0 and 1.0 taking into account ISRC, title, artist, duration, and version.
     public static func matchScore(
         titleA: String,
         artistA: String,
         durationA: TimeInterval?,
+        isrcA: String? = nil,
+        versionA: String? = nil,
         titleB: String,
         artistB: String,
-        durationB: TimeInterval?
+        durationB: TimeInterval?,
+        isrcB: String? = nil,
+        versionB: String? = nil
     ) -> Double {
+        // 1. Direct ISRC Match
+        if let iA = isrcA, let iB = isrcB, !iA.isEmpty && !iB.isEmpty {
+            if iA.uppercased() == iB.uppercased() {
+                return 1.0
+            }
+        }
+
+        // 2. Version Discrepancy Check (e.g. Live vs Remix vs Original)
+        let vA = versionA ?? Song.extractVersion(from: titleA)
+        let vB = versionB ?? Song.extractVersion(from: titleB)
+        if vA != vB {
+            // Different recordings must not be cross-matched as the same track
+            return 0.20
+        }
+
         let normTitleA = normalize(titleA)
         let normTitleB = normalize(titleB)
         let normArtistA = normalize(artistA)
@@ -22,19 +44,19 @@ public enum TrackMatcher {
 
         // Title match (0.5 max)
         if normTitleA == normTitleB {
-            score += 0.5
+            score += 0.50
         } else if normTitleA.contains(normTitleB) || normTitleB.contains(normTitleA) {
             score += 0.35
         } else {
             let sim = stringSimilarity(normTitleA, normTitleB)
-            score += sim * 0.4
+            score += sim * 0.40
         }
 
         // Artist match (0.3 max)
         if normArtistA == normArtistB {
-            score += 0.3
+            score += 0.30
         } else if normArtistA.contains(normArtistB) || normArtistB.contains(normArtistA) {
-            score += 0.2
+            score += 0.20
         } else {
             let sim = stringSimilarity(normArtistA, normArtistB)
             score += sim * 0.25
@@ -44,18 +66,40 @@ public enum TrackMatcher {
         if let dA = durationA, let dB = durationB, dA > 0 && dB > 0 {
             let diff = abs(dA - dB)
             if diff <= 3.0 {
-                score += 0.2
+                score += 0.20
             } else if diff <= 8.0 {
-                score += 0.1
+                score += 0.10
             } else if diff > 30.0 {
-                // Large duration discrepancies penalize score heavily (e.g. live version vs single)
-                score -= 0.3
+                score -= 0.35 // Large discrepancy penalizes heavily
             }
         } else {
-            score += 0.1 // neutral default when duration is unknown
+            score += 0.10
         }
 
         return max(0.0, min(1.0, score))
+    }
+
+    /// Convenience overload matching by title, artist, and duration.
+    public static func matchScore(
+        titleA: String,
+        artistA: String,
+        durationA: TimeInterval?,
+        titleB: String,
+        artistB: String,
+        durationB: TimeInterval?
+    ) -> Double {
+        matchScore(
+            titleA: titleA,
+            artistA: artistA,
+            durationA: durationA,
+            isrcA: nil,
+            versionA: nil,
+            titleB: titleB,
+            artistB: artistB,
+            durationB: durationB,
+            isrcB: nil,
+            versionB: nil
+        )
     }
 
     private static func normalize(_ str: String) -> String {
