@@ -379,9 +379,18 @@ public struct LocalFilesView: View {
 // MARK: - Settings View
 public struct SettingsView: View {
     @State private var selectedQuality: AudioQuality = .high
-    @State private var selectedPreset: EqualizerPreset = .flat
+    @State private var eqEnabled: Bool = EqualizerManager.shared.isEnabled
+    @State private var selectedPreset: EqualizerPreset = EqualizerManager.shared.currentPreset
+    @State private var customGains: [Float] = EqualizerManager.shared.customGains
+    @State private var crossfadeDuration: Double = 4.0
+    @State private var gaplessEnabled: Bool = true
+    @State private var lyricsOffset: Double = 0.0
     @State private var cacheSizeMB: Double = 0.0
+    @State private var downloadSizeMB: Double = 0.0
     @State private var showCacheClearedAlert = false
+    @State private var showResetEQAlert = false
+    @State private var showExportAlert = false
+    @State private var exportMessage = ""
 
     public init() {}
 
@@ -389,34 +398,171 @@ public struct SettingsView: View {
         ZStack {
             HawkTheme.darkBackground.ignoresSafeArea()
             Form {
-                Section(header: Text("Streaming & Audio Quality").foregroundColor(HawkTheme.textSecondary)) {
-                    Picker("Streaming Quality", selection: $selectedQuality) {
+                // MARK: 1. Appearance & Theme
+                Section(header: Text("Appearance").foregroundColor(HawkTheme.textSecondary)) {
+                    HStack {
+                        Label("Theme", systemImage: "paintbrush.fill")
+                        Spacer()
+                        Text("Dark Mode (AMOLED)")
+                            .foregroundColor(HawkTheme.textSecondary)
+                    }
+                    HStack {
+                        Label("Accent Color", systemImage: "circle.fill")
+                            .foregroundColor(HawkTheme.primaryAccent)
+                        Spacer()
+                        Text("Hawk Coral")
+                            .foregroundColor(HawkTheme.textSecondary)
+                    }
+                }
+
+                // MARK: 2. Playback
+                Section(header: Text("Playback").foregroundColor(HawkTheme.textSecondary)) {
+                    Picker(selection: $selectedQuality) {
                         Text("Data Saver (96 kbps)").tag(AudioQuality.low)
                         Text("Standard (160 kbps)").tag(AudioQuality.standard)
                         Text("High (320 kbps AAC)").tag(AudioQuality.high)
-                        Text("Lossless (FLAC)").tag(AudioQuality.lossless)
+                        Text("Lossless (FLAC/ALAC)").tag(AudioQuality.lossless)
+                    } label: {
+                        Label("Streaming Quality", systemImage: "waveform.badge.magnifyingglass")
                     }
                     .pickerStyle(.menu)
                     .tint(HawkTheme.primaryAccent)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Label("Crossfade", systemImage: "arrow.triangle.swap")
+                            Spacer()
+                            Text(String(format: "%.1f s", crossfadeDuration))
+                                .foregroundColor(HawkTheme.textSecondary)
+                        }
+                        Slider(value: $crossfadeDuration, in: 0...12, step: 0.5) {
+                            Text("Crossfade Duration")
+                        }
+                        .tint(HawkTheme.primaryAccent)
+                        .onChange(of: crossfadeDuration) { _, val in
+                            Task {
+                                await HawkAudioEngine.shared.setCrossfadeDuration(val)
+                            }
+                        }
+                    }
+
+                    Toggle(isOn: $gaplessEnabled) {
+                        Label("Gapless Transitions", systemImage: "arrow.right.to.line")
+                    }
+                    .tint(HawkTheme.primaryAccent)
                 }
 
-                Section(header: Text("Equalizer").foregroundColor(HawkTheme.textSecondary)) {
-                    Picker("Audio Preset", selection: $selectedPreset) {
-                        Text("Flat").tag(EqualizerPreset.flat)
-                        Text("Bass Booster").tag(EqualizerPreset.bassBooster)
-                        Text("Vocal Booster").tag(EqualizerPreset.vocalBooster)
-                        Text("Acoustic").tag(EqualizerPreset.acoustic)
-                        Text("Electronic").tag(EqualizerPreset.electronic)
-                        Text("Rock").tag(EqualizerPreset.rock)
+                // MARK: 3. Audio Equalizer
+                Section(header: Text("Audio Equalizer").foregroundColor(HawkTheme.textSecondary)) {
+                    Toggle(isOn: $eqEnabled) {
+                        Label("Enable Equalizer", systemImage: "slider.horizontal.3")
                     }
-                    .onChange(of: selectedPreset) { _, newPreset in
-                        EqualizerManager.shared.applyPreset(newPreset)
+                    .tint(HawkTheme.primaryAccent)
+                    .onChange(of: eqEnabled) { _, enabled in
+                        EqualizerManager.shared.isEnabled = enabled
+                    }
+
+                    if eqEnabled {
+                        Picker("Audio Preset", selection: $selectedPreset) {
+                            ForEach(EqualizerPreset.allPresets) { preset in
+                                Text(preset.name).tag(preset)
+                            }
+                        }
+                        .onChange(of: selectedPreset) { _, newPreset in
+                            EqualizerManager.shared.applyPreset(newPreset)
+                            customGains = EqualizerManager.shared.customGains
+                        }
+
+                        // 10 Frequency Band Gain Sliders
+                        ForEach(0..<10, id: \.self) { idx in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(frequencyLabel(for: idx))
+                                        .font(.caption.monospaced())
+                                        .foregroundColor(HawkTheme.textSecondary)
+                                    Spacer()
+                                    Text(String(format: "%+.1f dB", customGains[idx]))
+                                        .font(.caption.monospaced())
+                                        .foregroundColor(customGains[idx] != 0 ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
+                                }
+                                Slider(
+                                    value: Binding(
+                                        get: { customGains[idx] },
+                                        set: { val in
+                                            customGains[idx] = val
+                                            EqualizerManager.shared.setBandGain(index: idx, gain: val)
+                                        }
+                                    ),
+                                    in: -12...12,
+                                    step: 0.5
+                                )
+                                .tint(HawkTheme.primaryAccent)
+                            }
+                        }
+
+                        Button("Reset to Flat") {
+                            EqualizerManager.shared.reset()
+                            selectedPreset = .flat
+                            customGains = EqualizerManager.shared.customGains
+                        }
+                        .foregroundColor(HawkTheme.primaryAccent)
                     }
                 }
 
+                // MARK: 4. Lyrics
+                Section(header: Text("Lyrics").foregroundColor(HawkTheme.textSecondary)) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Label("Sync Offset", systemImage: "clock.badge.checkmark")
+                            Spacer()
+                            Text(String(format: "%+.0f ms", lyricsOffset))
+                                .foregroundColor(HawkTheme.textSecondary)
+                        }
+                        Slider(value: $lyricsOffset, in: -500...500, step: 25)
+                            .tint(HawkTheme.primaryAccent)
+                    }
+                }
+
+                // MARK: 5. Downloads
+                Section(header: Text("Downloads").foregroundColor(HawkTheme.textSecondary)) {
+                    HStack {
+                        Label("Storage Used", systemImage: "internaldrive.fill")
+                        Spacer()
+                        Text(String(format: "%.1f MB", downloadSizeMB))
+                            .foregroundColor(HawkTheme.textSecondary)
+                    }
+                    Button("Clear All Downloads", role: .destructive) {
+                        Task {
+                            await DownloadManager.shared.clearAllDownloads()
+                            updateSizes()
+                        }
+                    }
+                }
+
+                // MARK: 6. Library & Playlists
+                Section(header: Text("Library & Playlists").foregroundColor(HawkTheme.textSecondary)) {
+                    Button {
+                        Task {
+                            let playlists = await PlaylistStore.shared.getAllPlaylists()
+                            if let first = playlists.first {
+                                let m3u = UniversalPlaylistImporter.exportToM3U8(playlist: first)
+                                exportMessage = "Exported '\(first.title)' with \(first.songs.count) tracks in M3U8 format (\(m3u.count) bytes)."
+                                showExportAlert = true
+                            } else {
+                                exportMessage = "No custom playlists found to export."
+                                showExportAlert = true
+                            }
+                        }
+                    } label: {
+                        Label("Export Playlists (M3U8)", systemImage: "square.and.arrow.up")
+                    }
+                    .foregroundColor(HawkTheme.primaryAccent)
+                }
+
+                // MARK: 7. Storage & Cache
                 Section(header: Text("Storage & Cache").foregroundColor(HawkTheme.textSecondary)) {
                     HStack {
-                        Text("Network Cache")
+                        Label("Network Cache", systemImage: "arrow.triangle.2.circlepath")
                         Spacer()
                         Text(String(format: "%.1f MB", cacheSizeMB))
                             .foregroundColor(HawkTheme.textSecondary)
@@ -424,31 +570,70 @@ public struct SettingsView: View {
 
                     Button("Clear Network Cache") {
                         URLCache.shared.removeAllCachedResponses()
-                        updateCacheSize()
-                        showCacheClearedAlert = true
+                        Task {
+                            await SourceResolver.shared.clearCache()
+                            updateSizes()
+                            showCacheClearedAlert = true
+                        }
                     }
                     .foregroundColor(HawkTheme.primaryAccent)
                 }
 
+                // MARK: 8. About HAWK
                 Section(header: Text("About HAWK").foregroundColor(HawkTheme.textSecondary)) {
+                    HStack(spacing: 14) {
+                        Image("hawk-logo", bundle: .main)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 48, height: 48)
+                            .cornerRadius(10)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("HAWK")
+                                .font(.headline)
+                                .foregroundColor(HawkTheme.textPrimary)
+                            Text("Native iOS Music Player")
+                                .font(.caption)
+                                .foregroundColor(HawkTheme.textSecondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+
                     HStack {
-                        Text("Product")
+                        Text("Developer")
                         Spacer()
-                        Text("HAWK Native iOS")
+                        Text("Kartavya Singh")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
+
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.0.0 (Build 1)")
+                        Text("1.2.1 (Build 2)")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
+
+                    HStack {
+                        Text("Repository")
+                        Spacer()
+                        Link("github.com/krtvysinghhhh/Hawk", destination: URL(string: "https://github.com/krtvysinghhhh/Hawk")!)
+                            .font(.subheadline)
+                            .foregroundColor(HawkTheme.primaryAccent)
+                    }
+
                     HStack {
                         Text("Audio Subsystem")
                         Spacer()
-                        Text("Native AVFoundation")
+                        Text("AVFoundation + 10-Band Biquad DSP")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
+
+                    HStack {
+                        Text("CarPlay Integration")
+                        Spacer()
+                        Text("Apple CarPlay Audio Template")
+                            .foregroundColor(HawkTheme.textSecondary)
+                    }
+
                     HStack {
                         Text("License")
                         Spacer()
@@ -465,14 +650,31 @@ public struct SettingsView: View {
         } message: {
             Text("Temporary audio and network caches have been cleared.")
         }
+        .alert("Playlist Export", isPresented: $showExportAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportMessage)
+        }
         .task {
-            updateCacheSize()
+            updateSizes()
+            let cross = await HawkAudioEngine.shared.crossfadeDuration
+            crossfadeDuration = cross
         }
     }
 
-    private func updateCacheSize() {
+    private func updateSizes() {
         let currentBytes = URLCache.shared.currentDiskUsage
         cacheSizeMB = Double(currentBytes) / (1024 * 1024)
+        Task {
+            let dlBytes = await DownloadManager.shared.totalDownloadedBytes()
+            downloadSizeMB = Double(dlBytes) / (1024 * 1024)
+        }
+    }
+
+    private func frequencyLabel(for index: Int) -> String {
+        let freqs = ["32 Hz", "64 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz"]
+        guard index >= 0 && index < freqs.count else { return "" }
+        return freqs[index]
     }
 }
 
@@ -933,7 +1135,51 @@ public struct RecentlyAddedView: View {
         }
         .navigationTitle("Recently Added")
         .task {
-            recentSongs = await LibraryAggregator.shared.allLibrarySongs()
+            let all = await LibraryAggregator.shared.allLibrarySongs()
+            recentSongs = all.sorted { ($0.dateAdded ?? .distantPast) > ($1.dateAdded ?? .distantPast) }
+        }
+    }
+}
+
+// MARK: - Recently Played View
+public struct RecentlyPlayedView: View {
+    @State private var recentPlayedSongs: [Song] = []
+    private var coordinator = PlaybackCoordinator.shared
+
+    public init() {}
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+            if recentPlayedSongs.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 48))
+                        .foregroundColor(HawkTheme.textTertiary)
+                    Text("No Listening History Yet")
+                        .font(.headline)
+                        .foregroundColor(HawkTheme.textSecondary)
+                    Text("Songs you play will automatically appear here based on genuine playback time.")
+                        .font(.caption)
+                        .foregroundColor(HawkTheme.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
+            } else {
+                List(recentPlayedSongs) { song in
+                    Button {
+                        coordinator.play(song: song, context: recentPlayedSongs)
+                    } label: {
+                        SongRowView(song: song)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .navigationTitle("Recently Played")
+        .task {
+            recentPlayedSongs = await ListeningStatsRecorder.shared.getRecentlyPlayed()
         }
     }
 }

@@ -6,14 +6,14 @@
 
 <p align="center">
   <strong>Independent Native Apple iOS Music Application</strong><br>
-  Built with Swift 6, AVFoundation, CarPlay, and SwiftUI Liquid Glass.
+  Developed by <strong>Kartavya Singh</strong> • Built with Swift 6, AVFoundation, CarPlay, and SwiftUI Liquid Glass.
 </p>
 
 <p align="center">
   <a href="https://apple.com"><img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B-blue.svg" alt="Platform iOS 17.0+" /></a>
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange.svg" alt="Swift 6.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-green.svg" alt="License GPLv3" /></a>
-  <a href="Tests/HawkVerify"><img src="https://img.shields.io/badge/Tests-57%20Passed-brightgreen.svg" alt="57 Tests Passing" /></a>
+  <a href="Tests/HawkVerify"><img src="https://img.shields.io/badge/Tests-64%20Passed-brightgreen.svg" alt="64 Tests Passing" /></a>
 </p>
 
 ---
@@ -79,7 +79,7 @@ HAWK/
 │   └── HawkUI/                # SwiftUI Liquid Glass Design System & Views
 ├── Configuration/             # Info.plist, Scene Manifests, Entitlements
 ├── Resources/                 # 1024x1024 AppIcon, Master Logo, Assets
-├── Tests/HawkVerify/          # 57-Test Automated Hardware Verification Suite
+├── Tests/HawkVerify/          # 64-Test Automated Hardware Verification Suite
 └── Scripts/                   # XcodeGen & IPA Build Scripts
 ```
 
@@ -120,7 +120,7 @@ Run the automated hardware verification harness:
 ```bash
 swift run HawkVerify
 ```
-Expected output: **57 PASSED, 0 FAILED**.
+Expected output: **64 PASSED, 0 FAILED**.
 
 ### 3. Generate Xcode Project & Build IPA
 ```bash

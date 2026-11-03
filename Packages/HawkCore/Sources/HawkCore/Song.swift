@@ -25,6 +25,7 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
     public let version: String?
     public let providerIdentifiers: [String: String]
     public let explicitStatus: Bool
+    public let dateAdded: Date?
 
     public init(
         id: String,
@@ -47,7 +48,8 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
         sourceId: String? = nil,
         version: String? = nil,
         providerIdentifiers: [String: String] = [:],
-        explicitStatus: Bool = false
+        explicitStatus: Bool = false,
+        dateAdded: Date? = Date()
     ) {
         self.id = id
         self.title = title
@@ -74,6 +76,7 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
         }
         self.providerIdentifiers = pIds
         self.explicitStatus = explicitStatus
+        self.dateAdded = dateAdded
     }
 
     /// Creates a copy of this song assigned to a specific queue tier and unique entry ID.
@@ -99,7 +102,8 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
             sourceId: sourceId,
             version: version,
             providerIdentifiers: providerIdentifiers,
-            explicitStatus: explicitStatus
+            explicitStatus: explicitStatus,
+            dateAdded: dateAdded
         )
     }
 

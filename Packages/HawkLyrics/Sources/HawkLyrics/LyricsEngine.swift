@@ -52,7 +52,7 @@ public actor LyricsEngine {
         }
 
         guard let url = URL(string: urlString) else { return nil }
-        var headers = ["User-Agent": "HAWK-iOS/1.0 (https://github.com/krtvysinghhhh/HAWK)"]
+        let headers = ["User-Agent": "HAWK-iOS/1.0 (https://github.com/krtvysinghhhh/HAWK)"]
 
         guard let (data, response) = try? await httpClient.request(url: url, headers: headers),
               (200...299).contains(response.statusCode),

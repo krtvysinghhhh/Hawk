@@ -3,6 +3,7 @@ import SwiftUI
 import HawkCore
 import HawkPlayback
 import HawkSources
+import HawkStats
 
 /// Primary reactive playback coordinator bridging UI controls to HawkAudioEngine, QueueManager, and PlaylistStore.
 @MainActor
@@ -39,6 +40,7 @@ public final class PlaybackCoordinator {
     }
 
     private var pollTask: Task<Void, Never>?
+    private var playbackTask: Task<Void, Never>?
 
     public init() {
         startPolling()
@@ -77,25 +79,43 @@ public final class PlaybackCoordinator {
                 if !dur.isNaN && dur > 0 {
                     self.duration = dur
                 }
+
+                // Feed wall-clock listening sampler
+                if let song = self.currentSong {
+                    await ListeningStatsRecorder.shared.onSample(song: song, isPlaying: self.isPlaying)
+                }
             }
         }
     }
 
     public func play(song: Song, context: [Song]? = nil, isAutoAdvance: Bool = false) {
+        // Cancel any pending playback or source-resolution task (latest-request-wins)
+        playbackTask?.cancel()
+
         self.currentSong = song
         self.playbackState = .loading(song)
         self.currentTime = 0.0
         self.duration = song.duration
         self.errorMessage = nil
 
-        Task {
+        playbackTask = Task { [weak self] in
+            guard let self = self else { return }
+
             if let context = context, !context.isEmpty {
                 let startIndex = context.firstIndex(where: { $0.id == song.id }) ?? 0
                 await QueueManager.shared.setContext(songs: context, startAt: startIndex)
             } else {
-                await QueueManager.shared.setContext(songs: [song], startAt: 0)
+                let currentQueue = await QueueManager.shared.fullTimeline
+                if currentQueue.isEmpty {
+                    await QueueManager.shared.setContext(songs: [song], startAt: 0)
+                }
             }
+
+            guard !Task.isCancelled else { return }
+
             self.queue = await QueueManager.shared.fullTimeline
+            self.repeatMode = await QueueManager.shared.repeatMode
+            self.isShuffleActive = await QueueManager.shared.isShuffleActive
 
             // Check favorite status
             self.isFavorite = await PlaylistStore.shared.isFavorite(songId: song.id)
@@ -103,8 +123,10 @@ public final class PlaybackCoordinator {
             do {
                 try await HawkAudioEngine.shared.play(song: song, isAutoAdvance: isAutoAdvance)
             } catch {
-                self.errorMessage = error.localizedDescription
-                self.playbackState = .failed(song, .playbackFailed(error.localizedDescription))
+                if !Task.isCancelled {
+                    self.errorMessage = error.localizedDescription
+                    self.playbackState = .failed(song, .playbackFailed(error.localizedDescription))
+                }
             }
         }
     }
@@ -133,7 +155,7 @@ public final class PlaybackCoordinator {
     public func next(isAutoAdvance: Bool = false) {
         Task {
             if let nextSong = await QueueManager.shared.next() {
-                play(song: nextSong, isAutoAdvance: isAutoAdvance)
+                play(song: nextSong, context: nil, isAutoAdvance: isAutoAdvance)
             } else {
                 self.playbackState = .idle
             }
@@ -142,8 +164,14 @@ public final class PlaybackCoordinator {
 
     public func previous() {
         Task {
+            // If more than 3 seconds into song, standard behavior is to restart current track
+            if self.currentTime > 3.0 {
+                seek(to: 0.0)
+                return
+            }
+
             if let prevSong = await QueueManager.shared.previous() {
-                play(song: prevSong)
+                play(song: prevSong, context: nil)
             }
         }
     }

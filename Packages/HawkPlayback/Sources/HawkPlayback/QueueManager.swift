@@ -7,13 +7,14 @@ public enum RepeatMode: String, Codable, Sendable {
     case one = "ONE"
 }
 
-/// Actor managing the multi-tier queue state machine with tier isolation and persistence.
+/// Actor managing the multi-tier queue state machine with tier isolation, stable identification, and history.
 public actor QueueManager {
     public static let shared = QueueManager()
 
     public private(set) var userQueue: [Song] = []
     public private(set) var contextQueue: [Song] = []
     public private(set) var autoplayQueue: [Song] = []
+    public private(set) var playHistory: [Song] = []
 
     public private(set) var currentIndex: Int = 0
     public private(set) var repeatMode: RepeatMode = .off
@@ -46,12 +47,11 @@ public actor QueueManager {
 
     public func playNext(song: Song) {
         let queued = song.withQueueMetadata(tier: .userQueue)
-        // Insert directly after the currently playing track
-        let insertIndex = min(currentIndex + 1, fullTimeline.count)
-        if insertIndex <= userQueue.count {
-            userQueue.insert(queued, at: insertIndex)
+        if currentIndex < userQueue.count {
+            userQueue.insert(queued, at: currentIndex + 1)
         } else {
-            userQueue.append(queued)
+            // If currently in context or at start, insert at head of userQueue
+            userQueue.insert(queued, at: 0)
         }
     }
 
@@ -72,6 +72,13 @@ public actor QueueManager {
 
         if repeatMode == .one {
             return currentSong
+        }
+
+        if let current = currentSong {
+            playHistory.append(current)
+            if playHistory.count > 100 {
+                playHistory.removeFirst()
+            }
         }
 
         if currentIndex + 1 < timeline.count {
@@ -125,16 +132,21 @@ public actor QueueManager {
         return timeline[index]
     }
 
+    public func jumpTo(entryId: UUID) -> Song? {
+        let timeline = fullTimeline
+        guard let idx = timeline.firstIndex(where: { $0.queueEntryId == entryId }) else { return nil }
+        currentIndex = idx
+        return timeline[idx]
+    }
+
     // MARK: - Shuffle & Repeat
     public func toggleShuffle() {
         isShuffleActive.toggle()
         if isShuffleActive {
-            // Preserve user-inserted queue, shuffle only the contextual queue
             var shuffledContext = contextQueue
             shuffledContext.shuffle()
             contextQueue = shuffledContext
         } else {
-            // Restore original album/playlist context order
             contextQueue = originalContextQueue
         }
     }
@@ -147,6 +159,11 @@ public actor QueueManager {
         }
     }
 
+    public func setRepeatMode(_ mode: RepeatMode) {
+        self.repeatMode = mode
+    }
+
+    // MARK: - Track Removal & Reordering
     public func removeTrack(entryId: UUID) {
         if let idx = userQueue.firstIndex(where: { $0.queueEntryId == entryId }) {
             userQueue.remove(at: idx)
@@ -160,6 +177,24 @@ public actor QueueManager {
             let actualIdx = userQueue.count + contextQueue.count + idx
             if actualIdx < currentIndex { currentIndex -= 1 }
         }
+        let count = fullTimeline.count
+        if count > 0 {
+            currentIndex = max(0, min(currentIndex, count - 1))
+        } else {
+            currentIndex = 0
+        }
+    }
+
+    public func moveUserQueueItem(fromOffsets source: IndexSet, toOffset destination: Int) {
+        var itemsToMove: [Song] = []
+        for index in source.sorted(by: >) {
+            if index < userQueue.count {
+                itemsToMove.append(userQueue.remove(at: index))
+            }
+        }
+        itemsToMove.reverse()
+        let dest = min(destination, userQueue.count)
+        userQueue.insert(contentsOf: itemsToMove, at: dest)
     }
 
     public func clearQueue() {
@@ -167,6 +202,7 @@ public actor QueueManager {
         contextQueue = []
         autoplayQueue = []
         originalContextQueue = []
+        playHistory = []
         currentIndex = 0
     }
 }

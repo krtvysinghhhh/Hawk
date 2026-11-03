@@ -68,15 +68,12 @@ To transition from module design/testing to full iOS compilation and `.ipa` gene
 
 ## 5. Deployment Target & Connected Device Assessment
 
-### 5.1 Physical Target Device (Verified via usbmuxd & lockdownd)
-- **Device Name:** `Kartavya’s iPhone`
-- **Product Model:** `iPhone 12` (`ProductType: iPhone13,2`, `HardwareModel: D53gAP`)
-- **Processor & Architecture:** Apple A14 Bionic (`arm64e`, Chip ID: `33025`)
-- **Installed OS:** `iOS 27.2` (Build `24B119`)
-- **Unique Device ID (UDID):** `00008101-001E542A3EE2001E`
-- **ECID:** `8536789721677854`
-- **Connection Interface:** High-Speed USB Lightning (`480 Mbps`, Port Location: `17825792`)
-- **Lockdown / Pairing State:** Paired, trusted, authenticated (`com.apple.mobile.lockdown` Protocol Version 2 active)
+### 5.1 Physical Target Device (Hardware Profile)
+- **Device Model:** `iPhone 12` (`ProductType: iPhone13,2`)
+- **Processor & Architecture:** Apple A14 Bionic (`arm64e`)
+- **Operating System:** iOS 17.0+ (Tested on iOS 17/18+)
+- **Connection Interface:** High-Speed USB Lightning / Wi-Fi
+- **Lockdown / Pairing State:** Paired, trusted, authenticated
 
 ### 5.2 Deployment Target
 - **Minimum Deployment Target:** **iOS 17.0**

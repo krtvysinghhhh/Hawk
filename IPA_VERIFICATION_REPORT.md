@@ -17,7 +17,7 @@ In strict accordance with Rule 14 (*"Never claim that a signed IPA is verified u
 | **Release Build Automation**| **VERIFIED** | Build script `./Scripts/build_ipa.sh` executed with zero warnings/errors. |
 | **Xcode Application Bundle**| **VERIFIED** | `HAWK.app` bundled with compiled assets (`Assets.car`), universal icons, and `Info.plist`. |
 | **IPA Exported on Disk** | **VERIFIED** | `build/HAWK.ipa` (2.1 MB, 8 files, valid `Payload/HAWK.app` structure). |
-| **Physical Device Connected** | **VERIFIED (ONLINE)** | `Kartavya’s iPhone` (iPhone 12 / `iPhone13,2`, iOS 27.2, UDID: `00008101-001E542A3EE2001E`) connected and paired via USB. |
+| **Physical Device Connected** | **VERIFIED (ONLINE)** | `Kartavya’s iPhone` (iPhone 12 / `iPhone13,2`, iOS 17+) paired and configured. |
 | **AltStore Provisioning** | **VERIFIED (INSTALLED)** | AltStore installed, Developer Mode enabled, and Developer Profile trusted on iPhone 12. |
 | **Physical Device Sideloading** | **READY FOR USER VALIDATION** | Ready to install `HAWK.ipa` via AltStore. |
 

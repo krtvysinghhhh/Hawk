@@ -1,11 +1,12 @@
 import Foundation
 import HawkCore
 
-/// Actor recording authentic wall-clock listening statistics and generating monthly Replay recaps.
+/// Actor recording authentic wall-clock listening statistics, persistent history, and generating monthly Replay recaps.
 public actor ListeningStatsRecorder {
     public static let shared = ListeningStatsRecorder()
 
     private let storageDirectory: URL
+    private let recentlyPlayedURL: URL
     private var currentSongId: String?
     private var currentSong: Song?
     private var lastSampleTimestamp: Date?
@@ -13,15 +14,35 @@ public actor ListeningStatsRecorder {
     private var playCountRegistered: Bool = false
 
     private var activeBucket: MonthlyBucket?
+    private var recentlyPlayed: [Song] = []
 
     public init(storageDirectory: URL? = nil) {
-        if let dir = storageDirectory {
-            self.storageDirectory = dir
+        let dir: URL
+        if let customDir = storageDirectory {
+            dir = customDir
         } else {
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            self.storageDirectory = docs.appendingPathComponent("HawkStats", isDirectory: true)
-            try? FileManager.default.createDirectory(at: self.storageDirectory, withIntermediateDirectories: true)
+            dir = docs.appendingPathComponent("HawkStats", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
+        self.storageDirectory = dir
+        self.recentlyPlayedURL = dir.appendingPathComponent("recently_played.json")
+
+        // Load persisted recent tracks
+        if let data = try? Data(contentsOf: self.recentlyPlayedURL),
+           let list = try? JSONDecoder().decode([Song].self, from: data) {
+            self.recentlyPlayed = list
+        }
+    }
+
+    /// Returns persistent history of genuinely listened tracks.
+    public func getRecentlyPlayed() -> [Song] {
+        return recentlyPlayed
+    }
+
+    public func clearRecentlyPlayed() {
+        recentlyPlayed.removeAll()
+        saveRecentlyPlayed()
     }
 
     /// Ticks progress from the playback engine sampler.
@@ -33,12 +54,14 @@ public actor ListeningStatsRecorder {
         let now = Date()
 
         if currentSongId != song.id {
-            // New track started
+            // New track started: record into listening history
             currentSongId = song.id
             currentSong = song
             currentTrackListenedSeconds = 0
             playCountRegistered = false
             lastSampleTimestamp = isPlaying ? now : nil
+
+            recordRecentlyPlayed(song: song)
             return
         }
 
@@ -69,6 +92,20 @@ public actor ListeningStatsRecorder {
         }
 
         recordListening(song: song, seconds: delta, countPlay: qualifiesPlayCount)
+    }
+
+    private func recordRecentlyPlayed(song: Song) {
+        recentlyPlayed.removeAll(where: { $0.id == song.id })
+        recentlyPlayed.insert(song, at: 0)
+        if recentlyPlayed.count > 50 {
+            recentlyPlayed = Array(recentlyPlayed.prefix(50))
+        }
+        saveRecentlyPlayed()
+    }
+
+    private func saveRecentlyPlayed() {
+        guard let data = try? JSONEncoder().encode(recentlyPlayed) else { return }
+        try? data.write(to: recentlyPlayedURL, options: .atomic)
     }
 
     private func recordListening(song: Song, seconds: Double, countPlay: Bool) {

@@ -2,6 +2,7 @@ import SwiftUI
 import HawkCore
 import HawkPlayback
 import HawkSources
+import HawkStats
 
 /// Primary tab navigation and root interface for HAWK.
 public struct MainTabView: View {
@@ -292,7 +293,9 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("")
-            .navigationBarHidden(true)
+            #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar)
+            #endif
             .task {
                 if trendingSongs.isEmpty {
                     await loadHomeData()
@@ -351,8 +354,15 @@ struct HomeView: View {
         self.topHits = TrackDeduplicator.deduplicate(yt + saavn)
         self.featuredSong = dedupedTrending.first ?? dedupedPop.first
 
-        // If user has favorites, show them in Jump Back In; otherwise show first 5 curated tracks
-        self.jumpBackInSongs = !favs.isEmpty ? favs : Array(dedupedTrending.prefix(6))
+        // Jump Back In uses actual listening history, falling back to favorites or top trending
+        let history = await ListeningStatsRecorder.shared.getRecentlyPlayed()
+        if !history.isEmpty {
+            self.jumpBackInSongs = history
+        } else if !favs.isEmpty {
+            self.jumpBackInSongs = favs
+        } else {
+            self.jumpBackInSongs = Array(dedupedTrending.prefix(6))
+        }
         self.isLoading = false
     }
 }
@@ -758,6 +768,7 @@ struct LibraryView: View {
         ("Songs", "music.note", Color(red: 0.0, green: 0.48, blue: 1.0), AnyView(AllSongsView())),
         ("Favourites", "heart.fill", Color(red: 1.0, green: 0.18, blue: 0.33), AnyView(FavoritesView())),
         ("Recently Added", "clock.fill", Color(red: 1.0, green: 0.58, blue: 0.0), AnyView(RecentlyAddedView())),
+        ("Recently Played", "play.circle.fill", Color(red: 0.98, green: 0.40, blue: 0.20), AnyView(RecentlyPlayedView())),
         ("Downloaded", "arrow.down.circle.fill", Color(red: 0.20, green: 0.78, blue: 0.35), AnyView(DownloadsView())),
         ("Local Files", "folder.fill", Color(red: 1.0, green: 0.80, blue: 0.0), AnyView(LocalFilesView()))
     ]
@@ -845,7 +856,7 @@ struct LibraryView: View {
             }
             .task {
                 let all = await LibraryAggregator.shared.allLibrarySongs()
-                self.recentLibrarySongs = all
+                self.recentLibrarySongs = all.sorted { ($0.dateAdded ?? .distantPast) > ($1.dateAdded ?? .distantPast) }
             }
         }
     }

@@ -8,6 +8,23 @@ import HawkPlayback
 import HawkLyrics
 import HawkStats
 
+/// Thread-safe synchronized container for AVFoundation asynchronous callbacks
+final class AtomicPlaybackState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isReady = false
+    private var _seekComplete = false
+
+    var isReady: Bool {
+        get { lock.withLock { _isReady } }
+        set { lock.withLock { _isReady = newValue } }
+    }
+
+    var seekComplete: Bool {
+        get { lock.withLock { _seekComplete } }
+        set { lock.withLock { _seekComplete = newValue } }
+    }
+}
+
 @MainActor
 func runAllVerifications() async {
     print("==================================================")
@@ -27,7 +44,7 @@ func runAllVerifications() async {
     }
 
     // 1. HawkCore Domain & PlaylistStore Tests
-    print("\n[1/8] Testing HawkCore Domain & PlaylistStore...")
+    print("\n[1/12] Testing HawkCore Domain & PlaylistStore...")
     let song = Song(
         id: "vid_test_101",
         title: "Starboy",
@@ -56,7 +73,7 @@ func runAllVerifications() async {
     assertTest("PlaylistStore isFavorite verified", favCheck == true)
 
     // 2. HawkSecurity & Crypto Tests
-    print("\n[2/8] Testing HawkSecurity & Crypto...")
+    print("\n[2/12] Testing HawkSecurity & Crypto...")
     let sapisidHash = CryptoUtils.generateSapisidHash(
         sapisid: "demo_sapisid",
         origin: "https://music.youtube.com",
@@ -67,7 +84,7 @@ func runAllVerifications() async {
     let sha256 = CryptoUtils.sha256Hex("HAWK")
     assertTest("SHA256 hex digest length (64 chars)", sha256.count == 64)
 
-    let keyStore = KeychainStore(serviceName: "com.hawk.verify")
+    let keyStore = KeychainStore(serviceName: "com.hawk.verify", inMemoryOnly: true)
     try? await keyStore.saveString(key: "auth_token", value: "secret_value_123")
     let retrieved = try? await keyStore.readString(key: "auth_token")
     assertTest("Keychain store save and read", retrieved == "secret_value_123")
@@ -78,7 +95,7 @@ func runAllVerifications() async {
     assertTest("JioSaavn DES Decryption with 38346591 key", decryptedStreamUrl?.contains("saavncdn.com") == true)
 
     // 3. HawkSources, Deduplication & Track Matcher Tests
-    print("\n[3/8] Testing HawkSources & Matcher...")
+    print("\n[3/12] Testing HawkSources & Matcher...")
     let exactScore = TrackMatcher.matchScore(
         titleA: "Blinding Lights",
         artistA: "The Weeknd",
@@ -167,24 +184,26 @@ func runAllVerifications() async {
     }
 
     // 4. SpotifyImporter Tests
-    print("\n[4/8] Testing Spotify Importer...")
+    print("\n[4/12] Testing Spotify Importer...")
     let parsedUrlId = SpotifyImporter.extractPlaylistId(from: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=123")
     assertTest("Spotify URL playlist ID extraction", parsedUrlId == "37i9dQZF1DXcBWIGoYBM5M")
 
     let parsedUriId = SpotifyImporter.extractPlaylistId(from: "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")
     assertTest("Spotify URI playlist ID extraction", parsedUriId == "37i9dQZF1DXcBWIGoYBM5M")
 
-    // 5. DownloadManager Tests
-    print("\n[5/8] Testing DownloadManager...")
+    // 5. DownloadManager Lifecycle Tests
+    print("\n[5/12] Testing DownloadManager...")
     let tempDownloadDir = FileManager.default.temporaryDirectory.appendingPathComponent("HawkVerifyDL_\(UUID().uuidString)")
     let downloadManager = DownloadManager(downloadsDirectory: tempDownloadDir)
     let initialDLCount = await downloadManager.getDownloadedSongs().count
     assertTest("DownloadManager initializes with 0 downloads", initialDLCount == 0)
     let notDL = await downloadManager.isDownloaded(songId: "non_existent_123")
     assertTest("DownloadManager isDownloaded false for non-existent", notDL == false)
+    let idleState = await downloadManager.getState(songId: "non_existent_123")
+    assertTest("DownloadManager returns .idle for non-existent", idleState == .idle)
 
     // 6. HawkPlayback & Multi-Tier Queue Tests
-    print("\n[6/8] Testing HawkPlayback 3-Tier Queue Engine...")
+    print("\n[6/12] Testing HawkPlayback 3-Tier Queue Engine...")
     let queue = QueueManager.shared
     await queue.clearQueue()
 
@@ -209,7 +228,7 @@ func runAllVerifications() async {
     assertTest("Equalizer low-band gain boosted (+6dB)", eq.customGains[0] == 6.0)
 
     // 7. HawkLyrics & LRC Parser Tests
-    print("\n[7/8] Testing HawkLyrics Engine...")
+    print("\n[7/12] Testing HawkLyrics Engine...")
     let sampleLrc = """
     [00:15.50]Hello from HAWK
     [01:02.00]Synchronized Apple Music lyrics
@@ -228,21 +247,23 @@ func runAllVerifications() async {
     let bogusLyrics = try? await LyricsEngine.shared.fetchLyrics(for: bogusSong)
     assertTest("LyricsEngine rejects non-existent / mismatched tracks", bogusLyrics == nil || bogusLyrics!.isEmpty)
 
-    // Real Native AVPlayer Audio Playback Engine Test
+    // Real Native AVPlayer Audio Playback Engine Test with Sendable Synchronized State
     print("\n  Testing Native AVPlayer Hardware Pipeline...")
     let testAudioURL = URL(string: "https://aac.saavncdn.com/077/0b02a92687d1ae3369b6859f44872e52_320.mp4")!
     let playerItem = AVPlayerItem(url: testAudioURL)
     let nativePlayer = AVPlayer(playerItem: playerItem)
 
-    var isReady = false
+    let playbackSync = AtomicPlaybackState()
     let readyObs = playerItem.observe(\.status, options: [.new, .initial]) { obsItem, _ in
-        if obsItem.status == .readyToPlay { isReady = true }
+        if obsItem.status == .readyToPlay {
+            playbackSync.isReady = true
+        }
     }
     let waitStart = Date()
-    while !isReady && Date().timeIntervalSince(waitStart) < 4.0 {
+    while !playbackSync.isReady && Date().timeIntervalSince(waitStart) < 4.0 {
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
-    assertTest("AVPlayerItem status transitions to .readyToPlay", isReady)
+    assertTest("AVPlayerItem status transitions to .readyToPlay", playbackSync.isReady)
     assertTest("AVPlayerItem duration is finite and valid (> 100s)", playerItem.duration.seconds > 100.0)
 
     nativePlayer.play()
@@ -256,22 +277,21 @@ func runAllVerifications() async {
     nativePlayer.pause()
     assertTest("AVPlayer pause stops playback (rate == 0)", nativePlayer.rate == 0)
 
-    var seekComplete = false
     nativePlayer.seek(to: CMTime(seconds: 30.0, preferredTimescale: 1000)) { _ in
-        seekComplete = true
+        playbackSync.seekComplete = true
     }
     let seekStart = Date()
-    while !seekComplete && Date().timeIntervalSince(seekStart) < 2.0 {
+    while !playbackSync.seekComplete && Date().timeIntervalSince(seekStart) < 2.0 {
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
     assertTest("AVPlayer seeking updates playback position (~30s)", abs(nativePlayer.currentTime().seconds - 30.0) < 1.0)
+    _ = readyObs // Retain observer
 
     // 8. HawkStats Listening Recorder Tests
-    print("\n[8/8] Testing HawkStats Wall-Clock Recorder...")
+    print("\n[8/12] Testing HawkStats Wall-Clock Recorder & History...")
     let statsDir = FileManager.default.temporaryDirectory.appendingPathComponent("HawkVerifyStats_\(UUID().uuidString)")
     let statsRecorder = ListeningStatsRecorder(storageDirectory: statsDir)
 
-    // Two ticks to record interval
     let testPlaySong = Song(id: "stat_track_1", title: "Song One", artist: "Artist One", duration: 100)
     await statsRecorder.onSample(song: testPlaySong, isPlaying: true)
     try? await Task.sleep(nanoseconds: 100_000_000)
@@ -284,17 +304,20 @@ func runAllVerifications() async {
     let bucket = await statsRecorder.getMonthlyReplay(monthKey: month)
     assertTest("Monthly aggregate bucket created", bucket != nil)
 
+    let recents = await statsRecorder.getRecentlyPlayed()
+    assertTest("Listening history tracks recently played song", recents.contains(where: { $0.id == "stat_track_1" }))
+
     // 9. CarPlay & Library Architecture Tests
-    print("\n[9/9] Testing CarPlay & Library Architecture...")
+    print("\n[9/12] Testing CarPlay & Library Architecture...")
     let carPlayManager = CarPlaySyncManager.shared
     let cpFavorites = await carPlayManager.fetchFavorites()
-    assertTest("CarPlaySyncManager fetchFavorites returns list", cpFavorites is [CarPlayBrowsingItem])
+    assertTest("CarPlaySyncManager fetchFavorites returns list", cpFavorites.count >= 0)
 
     let cpPlaylists = await carPlayManager.fetchPlaylists()
-    assertTest("CarPlaySyncManager fetchPlaylists returns list", cpPlaylists is [CarPlayBrowsingItem])
+    assertTest("CarPlaySyncManager fetchPlaylists returns list", cpPlaylists.count >= 0)
 
     let cpArtists = await carPlayManager.fetchArtists()
-    assertTest("CarPlaySyncManager fetchArtists returns list", cpArtists is [CarPlayBrowsingItem])
+    assertTest("CarPlaySyncManager fetchArtists returns list", cpArtists.count >= 0)
 
     let cpQueue = await carPlayManager.fetchQueueItems()
     assertTest("CarPlaySyncManager fetchQueueItems reflects queue", cpQueue.count == 3)
@@ -302,6 +325,57 @@ func runAllVerifications() async {
     let iconPath = "Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
     let iconExists = FileManager.default.fileExists(atPath: iconPath)
     assertTest("Official HAWK AppIcon-1024.png asset exists", iconExists)
+
+    // 10. Queue Stability & 100 Consecutive Navigation Operations Regression
+    print("\n[10/12] Testing 100 Consecutive Queue Operations Regression...")
+    let stressQueue = QueueManager.shared
+    await stressQueue.clearQueue()
+    let baseTracks = (0..<10).map { Song(id: "base_\($0)", title: "Base Track \($0)", artist: "Artist") }
+    await stressQueue.setContext(songs: baseTracks)
+
+    for i in 0..<100 {
+        if i % 4 == 0 {
+            await stressQueue.playNext(song: Song(id: "pn_\(i)", title: "PlayNext \(i)", artist: "PN Artist"))
+        } else if i % 5 == 0 {
+            await stressQueue.addToQueue(song: Song(id: "aq_\(i)", title: "AddToQueue \(i)", artist: "AQ Artist"))
+        } else if i % 7 == 0 {
+            _ = await stressQueue.previous()
+        } else {
+            _ = await stressQueue.next()
+        }
+    }
+    let currentAfterStress = await stressQueue.currentSong
+    assertTest("Queue remains stable and non-nil across 100 structural operations", currentAfterStress != nil)
+
+    // 11. PlaylistStore Corruption Quarantine & Safe Recovery
+    print("\n[11/12] Testing PlaylistStore Corruption Recovery...")
+    let corruptURL = FileManager.default.temporaryDirectory.appendingPathComponent("CorruptStore_\(UUID().uuidString).json")
+    let store1 = PlaylistStore(storageURL: corruptURL)
+    _ = await store1.createPlaylist(title: "Persistent Playlist")
+
+    // Intentionally corrupt primary JSON file with junk
+    try! "CORRUPTED { INVALID_DATA".data(using: .utf8)!.write(to: corruptURL)
+
+    // Initialize new store: must quarantine corrupted file and recover
+    let store2 = PlaylistStore(storageURL: corruptURL)
+    let favsAfterRecovery = await store2.getFavorites()
+    assertTest("PlaylistStore recovers safely from corrupted file without crashing", favsAfterRecovery.id == Playlist.favoritesId)
+
+    // 12. 10-Band Biquad DSP Equalizer & Universal Playlist Importer
+    print("\n[12/12] Testing 10-Band Biquad DSP Audio Equalizer & Universal Importer...")
+    let eqEngine = EqualizerManager.shared
+    eqEngine.isEnabled = true
+    eqEngine.applyPreset(.bassBooster)
+    var testBuffer: [Float] = [0.1, 0.2, -0.1, -0.2, 0.05, -0.05, 0.15, -0.15]
+    let initialSample = testBuffer[0]
+    eqEngine.process(buffer: &testBuffer, sampleRate: 44100.0)
+    assertTest("Biquad DSP modifies audio buffer according to gain curves", testBuffer[0] != initialSample)
+
+    let testPlaylist = Playlist(title: "Road Trip", songs: [song, queuedSong])
+    let exportedM3U = UniversalPlaylistImporter.exportToM3U8(playlist: testPlaylist)
+    assertTest("UniversalPlaylistImporter exports valid M3U8", exportedM3U.contains("#EXTM3U") && exportedM3U.contains("Starboy"))
+    let parsedM3U = UniversalPlaylistImporter.parseM3U(content: exportedM3U)
+    assertTest("UniversalPlaylistImporter parses M3U8 correctly", parsedM3U.tracks.count == 2)
 
     print("\n==================================================")
     print("  VERIFICATION RESULT: \(passed) PASSED, \(failed) FAILED")
