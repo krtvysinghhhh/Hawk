@@ -2,11 +2,11 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-// Script to extract and generate the official HAWK 1024x1024 Master App Icon.
+// Script to extract and generate the official HAWK 1024x1024 Master App Icon and master logo asset.
 let currentDir = FileManager.default.currentDirectoryPath
 let logoCandidates = [
-    "Resources/hawk-logo.png",
-    "/Users/krtvysingh/.gemini/antigravity/brain/2ee00cb9-3cf8-4f20-af3f-1d4bf529bbd2/.user_uploaded/media_1793640558960_9c29a275.jpg"
+    "/Users/krtvysingh/.gemini/antigravity/brain/2ee00cb9-3cf8-4f20-af3f-1d4bf529bbd2/.user_uploaded/media_1793727244551_9419d16a.jpg",
+    "Resources/hawk-logo.png"
 ]
 
 var sourceURL: URL?
@@ -43,10 +43,10 @@ guard let ctx = CGContext(
     exit(1)
 }
 
-// If processing raw upload, crop central rounded square (546x546 at x=239, y=108)
+// If processing raw upload, crop central rounded square (544x544 at x=239, y=110)
 let imageToDraw: CGImage
-if srcRep.pixelsWide == 1024 && srcRep.pixelsHigh == 764 {
-    let cropRect = CGRect(x: 239, y: 108, width: 546, height: 546)
+if srcRep.pixelsWide == 1024 && (srcRep.pixelsHigh == 765 || srcRep.pixelsHigh == 764) {
+    let cropRect = CGRect(x: 239, y: 110, width: 544, height: 544)
     imageToDraw = cgImage.cropping(to: cropRect) ?? cgImage
 } else {
     imageToDraw = cgImage
@@ -70,4 +70,9 @@ let outputDir = URL(fileURLWithPath: "Resources/Assets.xcassets/AppIcon.appicons
 try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 let iconURL = outputDir.appendingPathComponent("AppIcon-1024.png")
 try pngData.write(to: iconURL)
+
+let logoURL = URL(fileURLWithPath: "Resources/hawk-logo.png")
+try pngData.write(to: logoURL)
+
 print("Successfully generated official HAWK Master App Icon at \(iconURL.path)")
+print("Successfully generated official HAWK in-app logo at \(logoURL.path)")
