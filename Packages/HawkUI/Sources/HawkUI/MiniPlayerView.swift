@@ -29,7 +29,7 @@ public struct MiniPlayerView: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            // Artwork
+            // Artwork with spring transition
             AsyncImage(url: song.artworkURL) { phase in
                 if let image = phase.image {
                     image.resizable().scaledToFill()
@@ -38,11 +38,14 @@ public struct MiniPlayerView: View {
                         .overlay(Image(systemName: "music.note").foregroundColor(.white.opacity(0.6)))
                 }
             }
+            .id(song.id)
+            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: song.id)
             .frame(width: 44, height: 44)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .shadow(color: .black.opacity(0.4), radius: 6, x: 0, y: 3)
 
-            // Song Info
+            // Song Info with smooth text update
             VStack(alignment: .leading, spacing: 2) {
                 Text(song.title)
                     .font(.system(size: 14, weight: .semibold))
@@ -54,6 +57,7 @@ public struct MiniPlayerView: View {
                     .foregroundColor(HawkTheme.textSecondary)
                     .lineLimit(1)
             }
+            .animation(.easeInOut(duration: 0.25), value: song.id)
 
             Spacer()
 

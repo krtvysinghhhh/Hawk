@@ -33,13 +33,13 @@ public struct MainTabView: View {
 
                 LibraryView()
                     .tabItem {
-                        Label("Library", systemImage: "music.square.stack.fill")
+                        Label("Library", systemImage: "square.stack.fill")
                     }
                     .tag(3)
             }
             .accentColor(HawkTheme.primaryAccent)
 
-            // Docked Mini Player
+            // Docked Mini Player with smooth spring entrance & exit
             if let song = coordinator.currentSong {
                 MiniPlayerView(
                     song: song,
@@ -47,8 +47,17 @@ public struct MainTabView: View {
                     isBuffering: coordinator.isBuffering,
                     onPlayPause: { coordinator.togglePlayPause() },
                     onNext: { coordinator.next() },
-                    onTap: { coordinator.showNowPlaying = true }
+                    onTap: {
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                            coordinator.showNowPlaying = true
+                        }
+                    }
                 )
+                .transition(.asymmetric(
+                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                    removal: .move(edge: .bottom).combined(with: .opacity)
+                ))
+                .animation(.spring(response: 0.38, dampingFraction: 0.82), value: coordinator.currentSong?.id)
                 .padding(.bottom, 54) // Positioned directly over system bottom tab bar
             }
         }
@@ -64,7 +73,11 @@ public struct MainTabView: View {
                     onNext: { coordinator.next() },
                     onPrevious: { coordinator.previous() },
                     onSeek: { newTime in coordinator.seek(to: newTime) },
-                    onDismiss: { coordinator.showNowPlaying = false }
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            coordinator.showNowPlaying = false
+                        }
+                    }
                 )
             }
         }

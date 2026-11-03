@@ -23,6 +23,7 @@ public struct NowPlayingView: View {
     @State private var showQueue = false
     @State private var isScrubbing = false
     @State private var scrubTime: TimeInterval = 0
+    @State private var dragOffset: CGFloat = 0
 
     public init(
         song: Song,
@@ -110,7 +111,7 @@ public struct NowPlayingView: View {
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 } else {
-                    // Artwork Presentation
+                    // Artwork Presentation with smooth spring crossfade
                     AsyncImage(url: song.artworkURL) { phase in
                         if let image = phase.image {
                             image.resizable().scaledToFill()
@@ -123,6 +124,9 @@ public struct NowPlayingView: View {
                                 )
                         }
                     }
+                    .id(song.id)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .animation(.spring(response: 0.45, dampingFraction: 0.8), value: song.id)
                     .frame(width: 320, height: 320)
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .overlay(
@@ -287,6 +291,26 @@ public struct NowPlayingView: View {
                 .padding(.bottom, 20)
             }
         }
+        .offset(y: max(0, dragOffset))
+        .simultaneousGesture(
+            DragGesture()
+                .onChanged { value in
+                    if value.translation.height > 0 {
+                        dragOffset = value.translation.height
+                    }
+                }
+                .onEnded { value in
+                    if value.translation.height > 120 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            onDismiss()
+                        }
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
         .sheet(isPresented: $showQueue) {
             QueueSheetView()
         }
@@ -340,14 +364,15 @@ struct LyricsContainerView: View {
 
     private var currentActiveLineId: String? {
         guard isSynchronized else { return nil }
-        return lyrics.last(where: { currentTime >= $0.timestamp })?.id
+        // 120ms lead time gives natural perceptual vocal synchronization
+        return lyrics.last(where: { (currentTime + 0.12) >= $0.timestamp })?.id
     }
 
     var body: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottom) {
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 24) {
                         if isLoading {
                             VStack(spacing: 12) {
                                 ProgressView()
@@ -371,7 +396,7 @@ struct LyricsContainerView: View {
                             .padding(.top, 60)
                         } else {
                             ForEach(lyrics) { line in
-                                let isActive = isPlaying && isSynchronized && currentActiveLineId == line.id
+                                let isActive = isSynchronized && currentActiveLineId == line.id
                                 Button {
                                     if isSynchronized {
                                         onSeek(line.timestamp)
@@ -382,15 +407,15 @@ struct LyricsContainerView: View {
                                     }
                                 } label: {
                                     Text(line.text)
-                                        .font(.system(size: isSynchronized ? 24 : 19, weight: isActive ? .bold : .medium))
+                                        .font(.system(size: isSynchronized ? 25 : 19, weight: isActive ? .bold : .medium, design: .rounded))
                                         .foregroundColor(
                                             isSynchronized
-                                                ? (isActive ? HawkTheme.textPrimary : HawkTheme.textTertiary.opacity(0.4))
+                                                ? (isActive ? Color.white : Color.white.opacity(0.35))
                                                 : HawkTheme.textSecondary
                                         )
                                         .multilineTextAlignment(.leading)
                                         .scaleEffect(isActive ? 1.04 : 1.0, anchor: .leading)
-                                        .blur(radius: isSynchronized && !isActive ? 0.3 : 0)
+                                        .blur(radius: isSynchronized && !isActive ? 0.35 : 0)
                                         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isActive)
                                 }
                                 .buttonStyle(.plain)
@@ -399,7 +424,7 @@ struct LyricsContainerView: View {
                         }
                     }
                     .padding(.horizontal, 32)
-                    .padding(.vertical, 24)
+                    .padding(.vertical, 28)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .simultaneousGesture(
@@ -440,14 +465,25 @@ struct LyricsContainerView: View {
                 }
             }
             .task(id: song.id) {
+                // Immediately flush previous track lyrics to prevent stale visual flashes
+                lyrics = []
                 isLoading = true
                 isUserScrolling = false
-                lyrics = (try? await LyricsEngine.shared.fetchLyrics(for: song)) ?? []
-                isLoading = false
+                let fetched = (try? await LyricsEngine.shared.fetchLyrics(for: song)) ?? []
+                if !Task.isCancelled {
+                    lyrics = fetched
+                    isLoading = false
+                    // Auto-align to initial position
+                    if let initialActive = currentActiveLineId {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                            proxy.scrollTo(initialActive, anchor: .center)
+                        }
+                    }
+                }
             }
             .onChange(of: currentActiveLineId) { _, newId in
-                if isPlaying && !isUserScrolling, let newId {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                if !isUserScrolling, let newId {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                         proxy.scrollTo(newId, anchor: .center)
                     }
                 }

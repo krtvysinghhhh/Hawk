@@ -155,19 +155,21 @@ public actor SourceResolver {
             }
         }
 
-        // 2. Direct encrypted media URI fast-path (JioSaavn)
-        if let jio = providers.first(where: { $0.sourceId == "jiosaavn" }) {
-            if let stream = try? await jio.resolveStream(song: song, qualityCeiling: qualityCeiling) {
+        // 2. Fast-path: Designated provider if specified
+        if let targetId = song.sourceId, let targetProv = providers.first(where: { $0.sourceId == targetId }) {
+            if let stream = try? await targetProv.resolveStream(song: song, qualityCeiling: qualityCeiling) {
                 streamCache[cacheKey] = (stream, Date())
                 return stream
             }
         }
 
-        // 3. Provider-specific resolution if designated
-        if let targetId = song.sourceId, let targetProv = providers.first(where: { $0.sourceId == targetId }) {
-            if let stream = try? await targetProv.resolveStream(song: song, qualityCeiling: qualityCeiling) {
-                streamCache[cacheKey] = (stream, Date())
-                return stream
+        // 3. Fast-path: Direct encrypted media URI (JioSaavn)
+        if song.providerIdentifiers["encrypted_media_url"] != nil || song.sourceId == "jiosaavn" {
+            if let jio = providers.first(where: { $0.sourceId == "jiosaavn" }) {
+                if let stream = try? await jio.resolveStream(song: song, qualityCeiling: qualityCeiling) {
+                    streamCache[cacheKey] = (stream, Date())
+                    return stream
+                }
             }
         }
 

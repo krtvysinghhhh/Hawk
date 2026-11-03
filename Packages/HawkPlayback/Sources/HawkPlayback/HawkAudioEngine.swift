@@ -34,8 +34,9 @@ public actor HawkAudioEngine {
     public init() {
         self.playerA = AVPlayer()
         self.playerB = AVPlayer()
-        self.playerA.automaticallyWaitsToMinimizeStalling = true
-        self.playerB.automaticallyWaitsToMinimizeStalling = true
+        // Low-latency startup: start playing as soon as initial packets arrive
+        self.playerA.automaticallyWaitsToMinimizeStalling = false
+        self.playerB.automaticallyWaitsToMinimizeStalling = false
         setupAudioSession()
         setupRemoteCommands()
     }
@@ -49,7 +50,7 @@ public actor HawkAudioEngine {
     }
 
     // MARK: - Playback Control
-    public func play(song: Song) async throws {
+    public func play(song: Song, isAutoAdvance: Bool = false) async throws {
         playbackState = .loading(song)
 
         do {
@@ -61,15 +62,17 @@ public actor HawkAudioEngine {
             } else {
                 let stream = try await SourceResolver.shared.resolve(song: song)
                 playerItem = AVPlayerItem(url: stream.url)
+                // Set preferred forward buffer to 5 seconds for rapid instant start
+                playerItem.preferredForwardBufferDuration = 5.0
             }
 
             setupItemObservers(for: playerItem, song: song)
 
-            if crossfadeDuration > 0 && activePlayer.currentItem != nil && activePlayer.rate > 0 {
-                // Initiate true dual-player crossfade
+            if isAutoAdvance && crossfadeDuration > 0 && activePlayer.currentItem != nil && activePlayer.rate > 0 {
+                // Natural track finish: smooth dual-player crossfade
                 await executeCrossfade(to: playerItem, song: song)
             } else {
-                // Direct playback
+                // Manual track selection / skip: instant cut-in without 4s silent ramp
                 activePlayer.replaceCurrentItem(with: playerItem)
                 activePlayer.volume = 1.0
                 activePlayer.rate = playbackSpeed

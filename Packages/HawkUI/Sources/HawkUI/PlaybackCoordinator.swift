@@ -49,7 +49,7 @@ public final class PlaybackCoordinator {
         Task { [weak self] in
             await HawkAudioEngine.shared.setOnTrackFinished { [weak self] in
                 Task { @MainActor [weak self] in
-                    self?.next()
+                    self?.next(isAutoAdvance: true)
                 }
             }
         }
@@ -58,7 +58,8 @@ public final class PlaybackCoordinator {
     private func startPolling() {
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                // High-fidelity 20Hz polling (50ms) for ultra-responsive scrubber and live lyrics tracking
+                try? await Task.sleep(nanoseconds: 50_000_000)
                 guard let self = self else { continue }
                 let state = await HawkAudioEngine.shared.playbackState
                 self.playbackState = state
@@ -80,7 +81,7 @@ public final class PlaybackCoordinator {
         }
     }
 
-    public func play(song: Song, context: [Song]? = nil) {
+    public func play(song: Song, context: [Song]? = nil, isAutoAdvance: Bool = false) {
         self.currentSong = song
         self.playbackState = .loading(song)
         self.currentTime = 0.0
@@ -100,7 +101,7 @@ public final class PlaybackCoordinator {
             self.isFavorite = await PlaylistStore.shared.isFavorite(songId: song.id)
 
             do {
-                try await HawkAudioEngine.shared.play(song: song)
+                try await HawkAudioEngine.shared.play(song: song, isAutoAdvance: isAutoAdvance)
             } catch {
                 self.errorMessage = error.localizedDescription
                 self.playbackState = .failed(song, .playbackFailed(error.localizedDescription))
@@ -129,10 +130,10 @@ public final class PlaybackCoordinator {
         }
     }
 
-    public func next() {
+    public func next(isAutoAdvance: Bool = false) {
         Task {
             if let nextSong = await QueueManager.shared.next() {
-                play(song: nextSong)
+                play(song: nextSong, isAutoAdvance: isAutoAdvance)
             } else {
                 self.playbackState = .idle
             }
