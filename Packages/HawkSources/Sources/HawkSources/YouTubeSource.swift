@@ -27,12 +27,7 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             throw HawkError.networkError("Invalid YouTube Music URL")
         }
 
-        var headers = standardHeaders()
-        if let cookie = try? await keychain.readString(key: "yt_cookie"),
-           let sapisid = extractSapisid(from: cookie) {
-            headers["Cookie"] = cookie
-            headers["Authorization"] = CryptoUtils.generateSapisidHash(sapisid: sapisid)
-        }
+        let headers = standardHeaders()
 
         let body: [String: Any] = [
             "context": [
@@ -92,18 +87,12 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             throw HawkError.decodeError("Failed to encode player request")
         }
 
-        var headers = [
+        let headers = [
             "Content-Type": "application/json",
             "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone13,2; U; CPU iOS 17_0 like Mac OS X; en_US)",
             "x-youtube-client-name": "5",
             "x-youtube-client-version": "19.29.1"
         ]
-
-        if let cookie = try? await keychain.readString(key: "yt_cookie"),
-           let sapisid = extractSapisid(from: cookie) {
-            headers["Cookie"] = cookie
-            headers["Authorization"] = CryptoUtils.generateSapisidHash(sapisid: sapisid, origin: "https://www.youtube.com")
-        }
 
         let (data, response) = try await httpClient.request(
             url: url,
@@ -174,17 +163,6 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             "x-youtube-client-version": "1.20250101.01.00",
             "x-origin": "https://music.youtube.com"
         ]
-    }
-
-    private func extractSapisid(from cookie: String) -> String? {
-        let parts = cookie.components(separatedBy: ";")
-        for part in parts {
-            let pair = part.trimmingCharacters(in: .whitespaces).components(separatedBy: "=")
-            if pair.count == 2 && (pair[0] == "SAPISID" || pair[0] == "__Secure-3PAPISID") {
-                return pair[1]
-            }
-        }
-        return nil
     }
 
     private func parseSearchResults(from data: Data) -> [Song] {

@@ -426,6 +426,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         try? await keychain.delete(key: "google_access_token")
         try? await keychain.delete(key: "google_refresh_token")
         try? await keychain.delete(key: "google_token_expiry")
+        try? await keychain.delete(key: "yt_cookie")
 
         self.accountEmail = nil
         self.isConnected = false

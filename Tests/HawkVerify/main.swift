@@ -416,8 +416,20 @@ func runAllVerifications() async {
     // Credential connection and deletion
     try? await googleSync.connectWithToken(email: "user@example.com", accessToken: "ya29.sample_token")
     assertTest(.unit, "GoogleMusicSyncManager connects with email and token", googleSync.isConnected && googleSync.accountEmail == "user@example.com")
+
+    // Verify local playlist preservation across Google disconnect
+    let localPlaylist = await PlaylistStore.shared.createPlaylist(title: "Local User Playlist")
+    let playlistCountBefore = await PlaylistStore.shared.getAllPlaylists().count
+
     await googleSync.disconnect()
     assertTest(.unit, "GoogleMusicSyncManager disconnect securely purges credentials", !googleSync.isConnected && googleSync.accountEmail == nil)
+
+    let storedTokenAfter = try? await KeychainStore.shared.readString(key: "google_access_token")
+    assertTest(.unit, "Google access token completely deleted from Keychain on disconnect", storedTokenAfter == nil)
+
+    let allPlaylistsAfter = await PlaylistStore.shared.getAllPlaylists()
+    let playlistPreserved = allPlaylistsAfter.contains(where: { $0.id == localPlaylist.id })
+    assertTest(.unit, "Local HAWK playlists preserved after Google disconnect", playlistPreserved && allPlaylistsAfter.count == playlistCountBefore)
 
     // ==========================================
     // 7. UNIT TESTS: Lyrics Engine & LRC Accuracy
@@ -725,6 +737,21 @@ func runAllVerifications() async {
     assertTest(.asset, "Official full-bleed HAWK AppIcon-1024.png asset verified", iconExists)
     assertTest(.asset, "Official HAWK master hawk-logo.png asset verified", logoExists)
     assertTest(.asset, "Official transparent HAWK hawk-glyph.png asset verified", glyphExists)
+
+    // Verify icon dimensions and full bleed
+    var isFullBleed = false
+    var is1024x1024 = false
+    #if canImport(AppKit)
+    if let rep = NSBitmapImageRep(data: (try? Data(contentsOf: URL(fileURLWithPath: iconPath))) ?? Data()) {
+        is1024x1024 = (rep.pixelsWide == 1024 && rep.pixelsHigh == 1024)
+        if let corner = rep.colorAt(x: 0, y: 0) {
+            // Corner is dark slate background (#16151B), not black #000000
+            isFullBleed = corner.redComponent > 0.05 && corner.blueComponent > 0.08
+        }
+    }
+    #endif
+    assertTest(.asset, "AppIcon-1024.png has exact 1024x1024 master dimensions", is1024x1024)
+    assertTest(.asset, "AppIcon-1024.png background is full bleed (no black letterboxing)", isFullBleed)
 
     // Hardware audio configuration check
     assertTest(.hardwareConfig, "Native AVAudioSession playback category configured with .allowBluetooth / .allowAirPlay", true)

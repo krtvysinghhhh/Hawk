@@ -6,11 +6,8 @@ import HawkSources
 public struct GoogleYouTubeMusicSettingsView: View {
     @State private var syncManager = GoogleMusicSyncManager.shared
     @State private var showDisconnectAlert = false
-    @State private var showManualTokenSheet = false
     @State private var showClientIdSheet = false
     @State private var showErrorAlert = false
-    @State private var manualEmail = ""
-    @State private var manualToken = ""
     @State private var customClientIdInput = ""
     @State private var errorMessage: String?
     @State private var isSigningIn = false
@@ -217,25 +214,14 @@ public struct GoogleYouTubeMusicSettingsView: View {
                                 .cornerRadius(10)
                             }
 
-                            HStack(spacing: 16) {
-                                Button {
-                                    customClientIdInput = syncManager.configuredClientId ?? ""
-                                    showClientIdSheet = true
-                                } label: {
-                                    Text("Client ID Settings")
-                                        .font(.caption)
-                                        .foregroundColor(HawkTheme.textTertiary)
-                                        .underline()
-                                }
-
-                                Button {
-                                    showManualTokenSheet = true
-                                } label: {
-                                    Text("Direct Token / Cookie Input")
-                                        .font(.caption)
-                                        .foregroundColor(HawkTheme.textTertiary)
-                                        .underline()
-                                }
+                            Button {
+                                customClientIdInput = syncManager.configuredClientId ?? ""
+                                showClientIdSheet = true
+                            } label: {
+                                Text("Developer Client ID Settings")
+                                    .font(.caption)
+                                    .foregroundColor(HawkTheme.textTertiary)
+                                    .underline()
                             }
                             .padding(.top, 2)
                         }
@@ -324,9 +310,6 @@ public struct GoogleYouTubeMusicSettingsView: View {
             }
         } message: {
             Text(errorMessage ?? "An unexpected error occurred during Google sign-in.")
-        }
-        .sheet(isPresented: $showManualTokenSheet) {
-            manualTokenSheetContent
         }
         .sheet(isPresented: $showClientIdSheet) {
             clientIdSheetContent
@@ -503,68 +486,6 @@ public struct GoogleYouTubeMusicSettingsView: View {
                 .font(.caption)
                 .foregroundColor(HawkTheme.textSecondary)
         }
-    }
-
-    private var manualTokenSheetContent: some View {
-        NavigationStack {
-            ZStack {
-                HawkTheme.darkBackground.ignoresSafeArea()
-                VStack(spacing: 20) {
-                    Text("Manual Token Input")
-                        .font(.headline)
-                        .foregroundColor(HawkTheme.textPrimary)
-                        .padding(.top, 10)
-
-                    Text("Enter your Google Account email and YouTube Data API bearer token or cookie credentials.")
-                        .font(.caption)
-                        .foregroundColor(HawkTheme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-
-                    TextField("Account Email", text: $manualEmail)
-                        .padding()
-                        .background(HawkTheme.cardBackground)
-                        .cornerRadius(10)
-                        .foregroundColor(HawkTheme.textPrimary)
-                        .padding(.horizontal)
-#if os(iOS)
-                        .textInputAutocapitalization(.never)
-#endif
-
-                    SecureField("Access Token / Authorization Header", text: $manualToken)
-                        .padding()
-                        .background(HawkTheme.cardBackground)
-                        .cornerRadius(10)
-                        .foregroundColor(HawkTheme.textPrimary)
-                        .padding(.horizontal)
-
-                    Button("Save and Connect") {
-                        Task {
-                            guard !manualEmail.isEmpty && !manualToken.isEmpty else { return }
-                            try? await syncManager.connectWithToken(email: manualEmail, accessToken: manualToken)
-                            showManualTokenSheet = false
-                        }
-                    }
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(HawkTheme.primaryAccent)
-                    .cornerRadius(12)
-                    .padding(.horizontal)
-
-                    Spacer()
-                }
-                .padding(.top, 20)
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { showManualTokenSheet = false }
-                        .foregroundColor(HawkTheme.textSecondary)
-                }
-            }
-        }
-        .presentationDetents([.medium])
     }
 
     private func signInWithGoogle() {
