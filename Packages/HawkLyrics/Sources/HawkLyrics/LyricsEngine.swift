@@ -2,13 +2,30 @@ import Foundation
 import HawkCore
 import HawkNetworking
 
-/// Actor orchestrating lyrics resolution across open APIs (LRCLIB), TTML providers, and local caches.
+/// Actor orchestrating lyrics resolution across open APIs (LRCLIB), local .lrc files, and persistent disk caches.
 public actor LyricsEngine {
     public static let shared = LyricsEngine()
 
     private let httpClient: HawkHttpClient
-    private var cache: [String: [LyricLine]] = [:]
+    private var memoryCache: [String: [LyricLine]] = [:]
+    private var negativeCache: [String: Date] = [:] // Negative cache with TTL
     private var customOffsets: [String: TimeInterval] = [:]
+    private var defaultOffset: TimeInterval = 0
+    private var rateLimitUntil: Date?
+
+    private let userAgent = "HAWK/1.4.0 (https://github.com/krtvysinghhhh/Hawk)"
+    private let negativeCacheTTL: TimeInterval = 600 // 10 minutes
+
+    private var diskCacheDirectory: URL? {
+        guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let dir = base.appendingPathComponent("Lyrics", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
 
     public init(httpClient: HawkHttpClient = .shared) {
         self.httpClient = httpClient
@@ -17,45 +34,92 @@ public actor LyricsEngine {
     /// Fetches synchronized or plain lyrics for a song, utilizing LRCLIB open-access API with fallback search.
     public func fetchLyrics(for song: Song) async throws -> [LyricLine] {
         let cacheKey = song.canonicalKey
-        if let cached = cache[cacheKey] {
-            return applyOffset(cached, offset: customOffsets[song.id] ?? 0)
+        let effectiveOffset = (customOffsets[song.id] ?? 0) + defaultOffset
+
+        // 1. In-memory cache hit
+        if let cached = memoryCache[cacheKey] {
+            return applyOffset(cached, offset: effectiveOffset)
         }
 
-        // 1. Direct fetch with exact parameters
+        // 2. Persistent disk cache hit
+        if let diskCached = loadFromDisk(key: cacheKey) {
+            memoryCache[cacheKey] = diskCached
+            return applyOffset(diskCached, offset: effectiveOffset)
+        }
+
+        // 3. Local file check: If the track is a local audio file, check for adjacent .lrc
+        if let localURL = song.localFileURL {
+            let lrcURL = localURL.deletingPathExtension().appendingPathExtension("lrc")
+            if FileManager.default.fileExists(atPath: lrcURL.path),
+               let content = try? String(contentsOf: lrcURL, encoding: .utf8) {
+                let parsed = LrcParser.parse(content)
+                if !parsed.isEmpty {
+                    saveToDisk(key: cacheKey, lines: parsed)
+                    memoryCache[cacheKey] = parsed
+                    return applyOffset(parsed, offset: effectiveOffset)
+                }
+            }
+        }
+
+        // 4. Check negative-result cache to prevent hammering for missing lyrics
+        if let negativeTime = negativeCache[cacheKey], Date().timeIntervalSince(negativeTime) < negativeCacheTTL {
+            throw HawkError.lyricsUnavailable(song.title)
+        }
+
+        // 5. Check active rate limit backoff (HTTP 429)
+        if let backoff = rateLimitUntil, Date() < backoff {
+            throw HawkError.lyricsUnavailable("\(song.title) (Rate limit backoff active)")
+        }
+
+        // 6. Direct fetch with exact parameters (title, artist, album, duration)
         let cleanedTitle = cleanTrackTitle(song.title)
         let cleanedArtist = cleanArtistName(song.artist)
 
-        if let exactLyrics = await tryDirectFetch(title: cleanedTitle, artist: cleanedArtist, duration: song.duration) {
-            cache[cacheKey] = exactLyrics
-            return applyOffset(exactLyrics, offset: customOffsets[song.id] ?? 0)
+        if let exactLyrics = await tryDirectFetch(title: cleanedTitle, artist: cleanedArtist, album: song.albumTitle, duration: song.duration) {
+            saveToDisk(key: cacheKey, lines: exactLyrics)
+            memoryCache[cacheKey] = exactLyrics
+            negativeCache.removeValue(forKey: cacheKey)
+            return applyOffset(exactLyrics, offset: effectiveOffset)
         }
 
-        // 2. Fallback search query
+        // 7. Fallback bounded search query
         let searchQuery = "\(cleanedTitle) \(cleanedArtist)".trimmingCharacters(in: .whitespaces)
         if let searchLyrics = await trySearchFetch(query: searchQuery, duration: song.duration) {
-            cache[cacheKey] = searchLyrics
-            return applyOffset(searchLyrics, offset: customOffsets[song.id] ?? 0)
+            saveToDisk(key: cacheKey, lines: searchLyrics)
+            memoryCache[cacheKey] = searchLyrics
+            negativeCache.removeValue(forKey: cacheKey)
+            return applyOffset(searchLyrics, offset: effectiveOffset)
         }
 
+        // Record negative cache hit so subsequent rapid accesses don't repeat network calls
+        negativeCache[cacheKey] = Date()
         throw HawkError.lyricsUnavailable(song.title)
     }
 
-    private func tryDirectFetch(title: String, artist: String, duration: TimeInterval) async -> [LyricLine]? {
+    private func tryDirectFetch(title: String, artist: String, album: String?, duration: TimeInterval) async -> [LyricLine]? {
         guard let encodedTitle = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let encodedArtist = artist.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             return nil
         }
 
         var urlString = "https://lrclib.net/api/get?track_name=\(encodedTitle)&artist_name=\(encodedArtist)"
+        if let alb = album, !alb.isEmpty, let encodedAlbum = alb.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            urlString += "&album_name=\(encodedAlbum)"
+        }
         if duration > 0 {
             urlString += "&duration=\(Int(duration))"
         }
 
         guard let url = URL(string: urlString) else { return nil }
-        let headers = ["User-Agent": "HAWK-iOS/1.0 (https://github.com/krtvysinghhhh/HAWK)"]
+        let headers = ["User-Agent": userAgent]
 
-        guard let (data, response) = try? await httpClient.request(url: url, headers: headers),
-              (200...299).contains(response.statusCode),
+        guard let (data, response) = try? await httpClient.request(url: url, headers: headers) else {
+            return nil
+        }
+
+        handleRateLimitHeaders(response)
+
+        guard (200...299).contains(response.statusCode),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
@@ -69,9 +133,14 @@ public actor LyricsEngine {
             return nil
         }
 
-        let headers = ["User-Agent": "HAWK-iOS/1.0 (https://github.com/krtvysinghhhh/HAWK)"]
-        guard let (data, response) = try? await httpClient.request(url: url, headers: headers),
-              (200...299).contains(response.statusCode),
+        let headers = ["User-Agent": userAgent]
+        guard let (data, response) = try? await httpClient.request(url: url, headers: headers) else {
+            return nil
+        }
+
+        handleRateLimitHeaders(response)
+
+        guard (200...299).contains(response.statusCode),
               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return nil
         }
@@ -93,7 +162,23 @@ public actor LyricsEngine {
         return nil
     }
 
+    private func handleRateLimitHeaders(_ response: HTTPURLResponse) {
+        if response.statusCode == 429 {
+            if let retryHeader = response.allHeaderFields["Retry-After"] as? String,
+               let seconds = Double(retryHeader) {
+                rateLimitUntil = Date().addingTimeInterval(seconds)
+            } else {
+                rateLimitUntil = Date().addingTimeInterval(30) // Default 30s backoff
+            }
+        }
+    }
+
     private func parseLyricsJson(_ json: [String: Any]) -> [LyricLine]? {
+        // Instrumental detection
+        if let isInstrumental = json["instrumental"] as? Bool, isInstrumental {
+            return [LyricLine(timestamp: 0, text: "♪ Instrumental ♪")]
+        }
+
         if let syncedLyrics = json["syncedLyrics"] as? String, !syncedLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let parsed = LrcParser.parse(syncedLyrics)
             if !parsed.isEmpty { return parsed }
@@ -132,10 +217,16 @@ public actor LyricsEngine {
         customOffsets[songId] = offset
     }
 
+    /// Sets the global default calibration offset in seconds from settings.
+    public func setDefaultOffset(_ offset: TimeInterval) {
+        self.defaultOffset = offset
+    }
+
     private func applyOffset(_ lines: [LyricLine], offset: TimeInterval) -> [LyricLine] {
         guard offset != 0 else { return lines }
         return lines.map {
             LyricLine(
+                id: $0.id,
                 timestamp: max(0, $0.timestamp + offset),
                 text: $0.text,
                 words: $0.words.map { w in
@@ -147,5 +238,33 @@ public actor LyricsEngine {
                 }
             )
         }
+    }
+
+    // MARK: - Disk Caching
+    private func saveToDisk(key: String, lines: [LyricLine]) {
+        guard let dir = diskCacheDirectory else { return }
+        let safeName = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key
+        let fileURL = dir.appendingPathComponent("\(safeName).json")
+        if let data = try? JSONEncoder().encode(lines) {
+            try? data.write(to: fileURL, options: .atomic)
+        }
+    }
+
+    private func loadFromDisk(key: String) -> [LyricLine]? {
+        guard let dir = diskCacheDirectory else { return nil }
+        let safeName = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key
+        let fileURL = dir.appendingPathComponent("\(safeName).json")
+        guard let data = try? Data(contentsOf: fileURL),
+              let lines = try? JSONDecoder().decode([LyricLine].self, from: data) else {
+            return nil
+        }
+        return lines
+    }
+
+    public func clearDiskCache() {
+        guard let dir = diskCacheDirectory else { return }
+        try? FileManager.default.removeItem(at: dir)
+        memoryCache.removeAll()
+        negativeCache.removeAll()
     }
 }

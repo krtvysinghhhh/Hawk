@@ -425,7 +425,7 @@ struct LyricsContainerView: View {
                                             .font(.system(size: isSynchronized ? 26 : 19, weight: isActive ? .bold : .medium, design: .rounded))
                                             .foregroundColor(
                                                 isSynchronized
-                                                    ? (isActive ? Color.white : (isPast ? Color.white.opacity(0.35) : Color.white.opacity(0.22)))
+                                                    ? (isActive ? HawkTheme.textPrimary : (isPast ? HawkTheme.textSecondary : HawkTheme.textTertiary))
                                                     : HawkTheme.textSecondary
                                             )
                                             .multilineTextAlignment(.leading)
@@ -513,7 +513,7 @@ struct LyricsContainerView: View {
                 Text(word.text)
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .foregroundColor(
-                        wordActive ? Color.white : (wordPassed ? Color.white.opacity(0.9) : Color.white.opacity(0.4))
+                        wordActive ? HawkTheme.textPrimary : (wordPassed ? HawkTheme.textSecondary : HawkTheme.textTertiary)
                     )
             }
         }

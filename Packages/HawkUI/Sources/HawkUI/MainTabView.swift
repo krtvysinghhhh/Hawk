@@ -6,10 +6,17 @@ import HawkStats
 
 /// Primary tab navigation and root interface for HAWK.
 public struct MainTabView: View {
+    @AppStorage("hawk_appearance_mode") private var appearanceModeRaw: String = AppearanceMode.system.rawValue
     @State private var coordinator = PlaybackCoordinator.shared
     @State private var selectedTab = 0
 
-    public init() {}
+    private var activeColorScheme: ColorScheme? {
+        (AppearanceMode(rawValue: appearanceModeRaw) ?? .system).colorScheme
+    }
+
+    public init() {
+        HawkTheme.configureSystemAppearance()
+    }
 
     public var body: some View {
         ZStack(alignment: .bottom) {
@@ -80,6 +87,7 @@ public struct MainTabView: View {
                         }
                     }
                 )
+                .preferredColorScheme(activeColorScheme)
             }
         }
 #else
@@ -96,9 +104,11 @@ public struct MainTabView: View {
                     onSeek: { newTime in coordinator.seek(to: newTime) },
                     onDismiss: { coordinator.showNowPlaying = false }
                 )
+                .preferredColorScheme(activeColorScheme)
             }
         }
 #endif
+        .preferredColorScheme(activeColorScheme)
     }
 }
 

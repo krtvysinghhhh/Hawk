@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 import HawkCore
 import HawkPlayback
 import HawkSources
+import HawkLyrics
 import HawkStats
 
 // MARK: - Favorites View
@@ -406,13 +407,13 @@ public struct LocalFilesView: View {
 // MARK: - Settings View
 public struct SettingsView: View {
     @AppStorage("hawk_appearance_mode") private var appearanceModeRaw: String = AppearanceMode.system.rawValue
-    @State private var selectedQuality: AudioQuality = .high
+    @AppStorage("hawk_audio_quality") private var audioQualityRaw: String = AudioQuality.high.rawValue
+    @AppStorage("hawk_crossfade_duration") private var crossfadeDuration: Double = 4.0
+    @AppStorage("hawk_gapless_enabled") private var gaplessEnabled: Bool = true
+    @AppStorage("hawk_lyrics_offset_ms") private var lyricsOffset: Double = 0.0
     @State private var eqEnabled: Bool = EqualizerManager.shared.isEnabled
     @State private var selectedPreset: EqualizerPreset = EqualizerManager.shared.currentPreset
     @State private var customGains: [Float] = EqualizerManager.shared.customGains
-    @State private var crossfadeDuration: Double = 4.0
-    @State private var gaplessEnabled: Bool = true
-    @State private var lyricsOffset: Double = 0.0
     @State private var cacheSizeMB: Double = 0.0
     @State private var downloadSizeMB: Double = 0.0
     @State private var showCacheClearedAlert = false
@@ -442,7 +443,7 @@ public struct SettingsView: View {
                         Label("Accent Color", systemImage: "circle.fill")
                             .foregroundColor(HawkTheme.primaryAccent)
                         Spacer()
-                        Text("Muted Violet (#7867A8)")
+                        Text("Muted Violet (#8878B5 / #6F5B9C)")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
                 }
@@ -469,11 +470,11 @@ public struct SettingsView: View {
 
                 // MARK: 3. Playback
                 Section(header: Text("Playback").foregroundColor(HawkTheme.textSecondary)) {
-                    Picker(selection: $selectedQuality) {
-                        Text("Data Saver (96 kbps)").tag(AudioQuality.low)
-                        Text("Standard (160 kbps)").tag(AudioQuality.standard)
-                        Text("High (320 kbps AAC)").tag(AudioQuality.high)
-                        Text("Lossless (FLAC/ALAC)").tag(AudioQuality.lossless)
+                    Picker(selection: $audioQualityRaw) {
+                        Text("Data Saver (96 kbps)").tag(AudioQuality.low.rawValue)
+                        Text("Standard (160 kbps)").tag(AudioQuality.standard.rawValue)
+                        Text("High (320 kbps AAC)").tag(AudioQuality.high.rawValue)
+                        Text("Lossless (FLAC/ALAC)").tag(AudioQuality.lossless.rawValue)
                     } label: {
                         Label("Streaming Quality", systemImage: "waveform.badge.magnifyingglass")
                     }
@@ -614,7 +615,7 @@ public struct SettingsView: View {
                 // MARK: 7. Storage & Cache
                 Section(header: Text("Storage & Cache").foregroundColor(HawkTheme.textSecondary)) {
                     HStack {
-                        Label("Network Cache", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Network & Lyrics Cache", systemImage: "arrow.triangle.2.circlepath")
                         Spacer()
                         Text(String(format: "%.1f MB", cacheSizeMB))
                             .foregroundColor(HawkTheme.textSecondary)
@@ -624,6 +625,7 @@ public struct SettingsView: View {
                         URLCache.shared.removeAllCachedResponses()
                         Task {
                             await SourceResolver.shared.clearCache()
+                            await LyricsEngine.shared.clearDiskCache()
                             updateSizes()
                             showCacheClearedAlert = true
                         }
@@ -660,7 +662,7 @@ public struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.3.2 (Build 5)")
+                        Text("1.4.0 (Build 6)")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
 
@@ -709,6 +711,7 @@ public struct SettingsView: View {
         }
         .task {
             updateSizes()
+            await LyricsEngine.shared.setDefaultOffset(lyricsOffset / 1000.0)
             let cross = await HawkAudioEngine.shared.crossfadeDuration
             crossfadeDuration = cross
         }

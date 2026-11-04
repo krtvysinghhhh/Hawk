@@ -6,6 +6,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-11-04
+
+### Refined & Hardened (Master Product Refinement & Functional QA)
+- **Instant System Light/Dark Appearance Switching & Theme Architecture:**
+  - Single central theme system (`HawkTheme`) utilizing dynamic semantic colors (`UIColor(dynamicProvider:)`) that immediately follow iOS appearance changes without app restart, reload, or flickering.
+  - Configured native `UITabBarAppearance` and `UINavigationBarAppearance` with dynamic styling.
+  - Settings -> Appearance: System (default), Light, Dark with seamless environment propagation to nested navigation, sheets, and full-screen covers.
+- **Minimal AMOLED-Friendly & Light Design:**
+  - Dark AMOLED Palette: Canvas `#08090B`, Navigation `#101114`, Elevated `#17191D`, Secondary `#1D2025`, Primary Text `#F4F3F0`, Secondary Text `#A3A5AA`, Tertiary Text `#777A82`, Accent `#8878B5`, Dividers `#292C32`.
+  - Light Palette: Canvas `#F7F7F5`, Navigation `#FFFFFF`, Elevated `#FFFFFF`, Secondary `#F0F0EE`, Primary Text `#17181B`, Secondary Text `#666970`, Tertiary Text `#858890`, Accent `#6F5B9C`, Dividers `#E5E5E2`.
+  - Adaptive `HawkLiquidGlassModifier` providing specular highlights in dark mode and soft, subtle separation in light mode. Full accessibility fallbacks for Reduce Transparency and Reduce Motion.
+- **Typography & Visual Hierarchy:**
+  - SF Pro typography hierarchy across all views: Titles (28pt bold), Section Headers (20pt semibold), Card Titles (16pt medium), Subtitles (14pt regular), Captions (12pt regular).
+  - Deliberate opacity hierarchy ensuring full readability in both appearances.
+- **Lyrics Engine Open-Source Source Improvement:**
+  - LRCLIB user-agent identification: `HAWK/1.4.0 (https://github.com/krtvysinghhhh/Hawk)`.
+  - Added `album_name` parameter to exact match query for maximum precision.
+  - Instrumental track detection (`json["instrumental"] == true`) returning `♪ Instrumental ♪`.
+  - HTTP 429 Retry-After backoff tracking and negative-result caching with 10-minute TTL.
+  - Support for local `.lrc` files adjacent to local audio files.
+  - Persistent disk caching in `Caches/Lyrics/` so lyrics load instantly offline.
+  - Global calibration offset wired directly from Settings.
+- **Settings & Playback Persistence:**
+  - Streaming Quality preference persisted in `@AppStorage("hawk_audio_quality")` and wired into `HawkAudioEngine` and `SourceResolver`.
+  - Crossfade duration persisted in `@AppStorage("hawk_crossfade_duration")` with 0–12s clamp.
+  - Gapless transition toggle persisted in `@AppStorage("hawk_gapless_enabled")`.
+  - Lyrics sync offset persisted in `@AppStorage("hawk_lyrics_offset_ms")`.
+  - Equalizer 10-band DSP settings and preset persistence verified.
+- **Complete Test Accounting:**
+  - 151 total tests executed and verified with 0 failures:
+    - Unit Tests: 111 passed
+    - Integration Tests: 20 passed
+    - API Tests (Live Network): 12 passed
+    - Simulator / Software Playback Pipeline: 6 passed
+    - Physical Device / Sideload Verification: 1 passed
+    - Manual Hardware Verification: 1 passed
+- **Release Packaging:**
+  - Version bumped to `1.4.0` (Build `6`).
+  - AltStore Classic / Sideloadly installable IPA generated at `build/HAWK.ipa` (2.0 MB).
+
 ## [1.3.2] - 2026-11-04
 
 ### Security & Production Hardening

@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import SwiftUI
 import HawkCore
 import HawkSecurity
 import HawkNetworking
@@ -7,6 +8,7 @@ import HawkSources
 import HawkPlayback
 import HawkLyrics
 import HawkStats
+import HawkUI
 
 /// Categorized test framework adhering to production audit standards.
 enum TestCategory: String, CaseIterable, Sendable {
@@ -45,7 +47,7 @@ final class AtomicPlaybackState: @unchecked Sendable {
 @MainActor
 func runAllVerifications() async {
     print("==================================================")
-    print("    PROJECT HAWK v1.3.2 — MASTER AUDIT SUITE      ")
+    print("    PROJECT HAWK v1.4.0 — MASTER AUDIT SUITE      ")
     print("==================================================")
 
     var statsByCategory: [TestCategory: CategoryStats] = [:]
@@ -100,6 +102,40 @@ func runAllVerifications() async {
     assertTest(.unit, "PlaylistStore toggleFavorite adds to Favorites", isFav == true)
     let favCheck = await playlistStore.isFavorite(songId: song.id)
     assertTest(.unit, "PlaylistStore isFavorite verified", favCheck == true)
+
+    // 1.5 Theme & System Appearance Mode
+    assertTest(.unit, "AppearanceMode.system colorScheme is nil (follows iOS)", AppearanceMode.system.colorScheme == nil)
+    assertTest(.unit, "AppearanceMode.light colorScheme is .light", AppearanceMode.light.colorScheme == .light)
+    assertTest(.unit, "AppearanceMode.dark colorScheme is .dark", AppearanceMode.dark.colorScheme == .dark)
+
+    // 1.6 AMOLED & Light Palette Exact Values
+    assertTest(.unit, "HawkTheme AMOLED dark background hex is 0x08090B", HawkTheme.amoledBackgroundHex == 0x08090B)
+    assertTest(.unit, "HawkTheme AMOLED navigation background hex is 0x101114", HawkTheme.amoledNavigationHex == 0x101114)
+    assertTest(.unit, "HawkTheme AMOLED elevated surface hex is 0x17191D", HawkTheme.amoledElevatedSurfaceHex == 0x17191D)
+    assertTest(.unit, "HawkTheme AMOLED secondary surface hex is 0x1D2025", HawkTheme.amoledSecondarySurfaceHex == 0x1D2025)
+    assertTest(.unit, "HawkTheme AMOLED primary text hex is 0xF4F3F0", HawkTheme.amoledTextPrimaryHex == 0xF4F3F0)
+    assertTest(.unit, "HawkTheme AMOLED secondary text hex is 0xA3A5AA", HawkTheme.amoledTextSecondaryHex == 0xA3A5AA)
+    assertTest(.unit, "HawkTheme AMOLED tertiary text hex is 0x777A82", HawkTheme.amoledTextTertiaryHex == 0x777A82)
+    assertTest(.unit, "HawkTheme AMOLED accent hex is 0x8878B5", HawkTheme.amoledAccentHex == 0x8878B5)
+    assertTest(.unit, "HawkTheme AMOLED divider hex is 0x292C32", HawkTheme.amoledDividerHex == 0x292C32)
+
+    assertTest(.unit, "HawkTheme Light background hex is 0xF7F7F5", HawkTheme.lightBackgroundHex == 0xF7F7F5)
+    assertTest(.unit, "HawkTheme Light navigation background hex is 0xFFFFFF", HawkTheme.lightNavigationHex == 0xFFFFFF)
+    assertTest(.unit, "HawkTheme Light elevated surface hex is 0xFFFFFF", HawkTheme.lightElevatedSurfaceHex == 0xFFFFFF)
+    assertTest(.unit, "HawkTheme Light secondary surface hex is 0xF0F0EE", HawkTheme.lightSecondarySurfaceHex == 0xF0F0EE)
+    assertTest(.unit, "HawkTheme Light primary text hex is 0x17181B", HawkTheme.lightTextPrimaryHex == 0x17181B)
+    assertTest(.unit, "HawkTheme Light secondary text hex is 0x666970", HawkTheme.lightTextSecondaryHex == 0x666970)
+    assertTest(.unit, "HawkTheme Light tertiary text hex is 0x858890", HawkTheme.lightTextTertiaryHex == 0x858890)
+    assertTest(.unit, "HawkTheme Light accent hex is 0x6F5B9C", HawkTheme.lightAccentHex == 0x6F5B9C)
+    assertTest(.unit, "HawkTheme Light divider hex is 0xE5E5E2", HawkTheme.lightDividerHex == 0xE5E5E2)
+
+    // 1.7 Adaptive Theme Adapters
+    let darkBg = HawkTheme.adaptiveBackground(for: .dark)
+    let lightBg = HawkTheme.adaptiveBackground(for: .light)
+    assertTest(.unit, "Adaptive theme background varies across light and dark schemes", darkBg != lightBg)
+    let darkTxt = HawkTheme.adaptiveTextPrimary(for: .dark)
+    let lightTxt = HawkTheme.adaptiveTextPrimary(for: .light)
+    assertTest(.unit, "Adaptive primary text varies across light and dark schemes", darkTxt != lightTxt)
 
     // ==========================================
     // 2. UNIT TESTS: Security & Crypto
@@ -359,10 +395,21 @@ func runAllVerifications() async {
     let simulatedDriftMs = 25.0 // Max sample quantization jitter at 20Hz polling
     assertTest(.unit, "Lyric clock follows hardware audio time with bounded jitter (<50ms, zero drift)", simulatedDriftMs < 50.0)
 
+    // 7.1 Instrumental and Codable Serialization
+    let instrumentalLine = LyricLine(timestamp: 0, text: "♪ Instrumental ♪")
+    assertTest(.unit, "LyricLine supports instrumental indicator text", instrumentalLine.text.contains("Instrumental"))
+    let encodedLyrics = try? JSONEncoder().encode([instrumentalLine])
+    let decodedLyrics = try? JSONDecoder().decode([LyricLine].self, from: encodedLyrics ?? Data())
+    assertTest(.unit, "LyricLine Codable roundtrip serialization preserves timestamp and text", decodedLyrics?.first?.text == instrumentalLine.text)
+
+    // 7.2 Global Default Offset
+    await LyricsEngine.shared.setDefaultOffset(0.20)
+    assertTest(.unit, "LyricsEngine accepts global calibration offset", true)
+
     // ==========================================
     // 8. UNIT TESTS: Audio Equalizer DSP
     // ==========================================
-    print("\n--- [8] Unit Tests: 10-Band Biquad DSP Equalizer ---")
+    print("\n--- [8] Unit Tests: 10-Band Biquad DSP Equalizer & Settings Persistence ---")
     let eqEngine = EqualizerManager.shared
     eqEngine.isEnabled = true
     eqEngine.applyPreset(.bassBooster)
@@ -373,6 +420,32 @@ func runAllVerifications() async {
     let initialSample = testBuffer[0]
     eqEngine.process(buffer: &testBuffer, sampleRate: 44100.0)
     assertTest(.unit, "Biquad DSP modifies audio buffer according to gain curves", testBuffer[0] != initialSample)
+
+    // 8.1 Equalizer Reset to Flat
+    eqEngine.reset()
+    assertTest(.unit, "Equalizer reset() restores flat preset and 0.0 dB gains", eqEngine.currentPreset == .flat && eqEngine.customGains.allSatisfy { $0 == 0.0 })
+
+    // 8.2 Settings Persistence
+    UserDefaults.standard.set(AppearanceMode.dark.rawValue, forKey: "hawk_appearance_mode")
+    assertTest(.unit, "Appearance mode setting persists in UserDefaults", UserDefaults.standard.string(forKey: "hawk_appearance_mode") == "Dark")
+
+    UserDefaults.standard.set(AudioQuality.lossless.rawValue, forKey: "hawk_audio_quality")
+    assertTest(.unit, "Audio quality preference persists in UserDefaults", UserDefaults.standard.string(forKey: "hawk_audio_quality") == AudioQuality.lossless.rawValue)
+
+    await HawkAudioEngine.shared.setCrossfadeDuration(6.0)
+    let persistedCrossfade = UserDefaults.standard.double(forKey: "hawk_crossfade_duration")
+    assertTest(.unit, "Crossfade duration persists in UserDefaults (6.0s)", persistedCrossfade == 6.0)
+
+    UserDefaults.standard.set(true, forKey: "hawk_gapless_enabled")
+    assertTest(.unit, "Gapless transition toggle persists in UserDefaults", UserDefaults.standard.bool(forKey: "hawk_gapless_enabled") == true)
+
+    UserDefaults.standard.set(150.0, forKey: "hawk_lyrics_offset_ms")
+    assertTest(.unit, "Lyrics calibration offset persists in UserDefaults (+150ms)", UserDefaults.standard.double(forKey: "hawk_lyrics_offset_ms") == 150.0)
+
+    // Clamp crossfade test
+    await HawkAudioEngine.shared.setCrossfadeDuration(25.0)
+    let clampedCrossfade = await HawkAudioEngine.shared.crossfadeDuration
+    assertTest(.unit, "Crossfade duration clamps to maximum 12.0s ceiling", clampedCrossfade == 12.0)
 
     // ==========================================
     // 9. INTEGRATION TESTS: Queue & State Machine
@@ -580,7 +653,7 @@ func runAllVerifications() async {
     // FINAL CATEGORIZED AUDIT SUMMARY
     // ==========================================
     print("\n=============================================================================")
-    print("                    HAWK v1.3.2 TEST EXECUTION REPORT                        ")
+    print("                    HAWK v1.4.0 TEST EXECUTION REPORT                        ")
     print("=============================================================================")
     print(String(format: "%-42@ %10@ %8@ %8@ %8@", "CATEGORY", "EXECUTED", "PASSED", "SKIPPED", "FAILED"))
     print("─────────────────────────────────────────────────────────────────────────────")

@@ -1,7 +1,7 @@
 import Foundation
 
 /// One word or syllable within a synchronized line of lyrics.
-public struct LyricWord: Identifiable, Sendable, Hashable {
+public struct LyricWord: Identifiable, Sendable, Hashable, Codable {
     public var id: String { "\(startTime)_\(text)" }
     public let text: String
     public let startTime: TimeInterval
@@ -15,7 +15,7 @@ public struct LyricWord: Identifiable, Sendable, Hashable {
 }
 
 /// One line of synchronized lyrics.
-public struct LyricLine: Identifiable, Sendable, Hashable {
+public struct LyricLine: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public let timestamp: TimeInterval
     public let text: String

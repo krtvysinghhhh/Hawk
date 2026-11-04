@@ -76,7 +76,8 @@ let package = Package(
                 "HawkSources",
                 "HawkPlayback",
                 "HawkLyrics",
-                "HawkStats"
+                "HawkStats",
+                "HawkUI"
             ],
             path: "Tests/HawkVerify"
         )

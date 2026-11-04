@@ -8,6 +8,9 @@ struct HawkApp: App {
     @AppStorage("hawk_appearance_mode") private var appearanceModeRaw: String = AppearanceMode.system.rawValue
 
     init() {
+        // Configure native iOS navigation & tab bar dynamic styling
+        HawkTheme.configureSystemAppearance()
+
         // Initialize background audio engine
         _ = HawkAudioEngine.shared
     }

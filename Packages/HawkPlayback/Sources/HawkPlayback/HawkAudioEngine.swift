@@ -50,8 +50,22 @@ public actor HawkAudioEngine {
         // Low-latency startup: start playing as soon as initial packets arrive
         self.playerA.automaticallyWaitsToMinimizeStalling = false
         self.playerB.automaticallyWaitsToMinimizeStalling = false
+
+        if UserDefaults.standard.object(forKey: "hawk_crossfade_duration") != nil {
+            self.crossfadeDuration = UserDefaults.standard.double(forKey: "hawk_crossfade_duration")
+        }
+
         setupAudioSession()
         setupRemoteCommands()
+    }
+
+    /// User's preferred audio quality ceiling loaded from persisted settings.
+    public var preferredQuality: AudioQuality {
+        if let raw = UserDefaults.standard.string(forKey: "hawk_audio_quality"),
+           let q = AudioQuality(rawValue: raw) {
+            return q
+        }
+        return .high
     }
 
     private var activePlayer: AVPlayer {
@@ -75,7 +89,7 @@ public actor HawkAudioEngine {
                 preloadedSongId = nil
                 preloadedItem = nil
             } else {
-                let stream = try await SourceResolver.shared.resolve(song: song)
+                let stream = try await SourceResolver.shared.resolve(song: song, qualityCeiling: preferredQuality)
                 // If a newer play() superseded this one while resolving, abort early
                 guard thisRequestId == self.activePlayRequestId else {
                     return
@@ -128,11 +142,13 @@ public actor HawkAudioEngine {
         guard let nextSong = await QueueManager.shared.peekNext() else { return }
 
         preloadTask = Task { [weak self] in
-            guard let stream = try? await SourceResolver.shared.resolve(song: nextSong) else { return }
+            guard let self = self else { return }
+            let ceiling = await self.preferredQuality
+            guard let stream = try? await SourceResolver.shared.resolve(song: nextSong, qualityCeiling: ceiling) else { return }
             if Task.isCancelled { return }
             let item = AVPlayerItem(url: stream.url)
             _ = try? await item.asset.load(.isPlayable)
-            guard let self = self, !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return }
             await self.setPreloadedItem(songId: nextSong.id, item: item)
         }
     }
@@ -271,6 +287,7 @@ public actor HawkAudioEngine {
 
     public func setCrossfadeDuration(_ duration: TimeInterval) {
         self.crossfadeDuration = max(0, min(12.0, duration))
+        UserDefaults.standard.set(self.crossfadeDuration, forKey: "hawk_crossfade_duration")
     }
 
     public func setPlaybackSpeed(_ speed: Float) {
