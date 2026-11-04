@@ -1,7 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# MARK: - HAWK Release IPA Build & Packaging
+# Self-contained: manages paths, isolated Python .venv, Release archive, and IPA export.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
 echo "=================================================="
@@ -21,6 +25,41 @@ if ! command -v xcodebuild >/dev/null 2>&1 || [ ! -d "/Applications/Xcode.app" ]
     echo "   3. Re-run: ./Scripts/build_ipa.sh"
     exit 1
 fi
+
+# Ensure Python Virtual Environment (.venv) for build tasks
+ensure_python_venv() {
+    local VENV_DIR="$PROJECT_DIR/.venv"
+    local VENV_PY="$VENV_DIR/bin/python"
+    local REQ_FILE="$PROJECT_DIR/requirements-build.txt"
+
+    if [ ! -x "$VENV_PY" ]; then
+        echo "Creating isolated Python build environment (.venv)..."
+        local BASE_PY=""
+        if command -v python3.12 >/dev/null 2>&1; then
+            BASE_PY="$(command -v python3.12)"
+        elif command -v python3 >/dev/null 2>&1; then
+            BASE_PY="$(command -v python3)"
+        else
+            echo "❌ Error: Neither python3.12 nor python3 found in PATH." >&2
+            exit 1
+        fi
+        "$BASE_PY" -m venv "$VENV_DIR" || {
+            echo "❌ Error: Failed to create virtual environment using $BASE_PY." >&2
+            exit 1
+        }
+    fi
+
+    if ! "$VENV_PY" -c "import yaml" >/dev/null 2>&1; then
+        echo "Installing build dependencies into .venv from requirements-build.txt..."
+        "$VENV_PY" -m pip install --quiet -r "$REQ_FILE" || {
+            echo "❌ Error: Failed to install requirements from $REQ_FILE." >&2
+            exit 1
+        }
+    fi
+    PYTHON_BIN="$VENV_PY"
+}
+
+ensure_python_venv
 
 # Synchronize OAuth configuration if present in environment or xcconfig
 CONFIG_FILE="$PROJECT_DIR/Configuration/GoogleOAuth.xcconfig"
@@ -60,10 +99,10 @@ fi
 echo ""
 echo "✅ HAWK.ipa successfully created at: $OUTPUT_DIR/HAWK.ipa"
 
-# Verify compiled Info.plist in the generated IPA
+# Verify compiled Info.plist in the generated IPA using isolated python
 echo ""
 echo "--- Built IPA Verification ---"
-python3 -c "
+"$PYTHON_BIN" -c "
 import zipfile, plistlib
 
 ipa_path = '$OUTPUT_DIR/HAWK.ipa'

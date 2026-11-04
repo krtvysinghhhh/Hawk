@@ -1,14 +1,3 @@
 // HAWK Google OAuth 2.0 Build Configuration
-//
-// To configure a developer-owned Google OAuth iOS Client ID for production:
-// 1. In Google Cloud Console (console.cloud.google.com), create an OAuth 2.0 Client ID.
-//    - Application type: iOS
-//    - Bundle ID: com.hawk.music
-// 2. Set HAWK_GOOGLE_CLIENT_ID to your Client ID (e.g. 1234567890-abcdef.apps.googleusercontent.com)
-// 3. Set HAWK_GOOGLE_REVERSED_CLIENT_ID to the reversed scheme (e.g. com.googleusercontent.apps.1234567890-abcdef)
-// 4. Run ./Scripts/build_ipa.sh
-//
-// Alternatively, run: ./Scripts/configure_oauth.sh "<your-client-id>"
-
-HAWK_GOOGLE_CLIENT_ID =
-HAWK_GOOGLE_REVERSED_CLIENT_ID =
+HAWK_GOOGLE_CLIENT_ID = 862376793952-pdvpt1139kcf2mdgpkrqrol2av0ks58d.apps.googleusercontent.com
+HAWK_GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.862376793952-pdvpt1139kcf2mdgpkrqrol2av0ks58d

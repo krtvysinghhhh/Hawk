@@ -29,3 +29,9 @@ local.properties
 *.xcarchive
 *.dSYM.zip
 *.dSYM
+
+# Python Build Virtual Environment
+.venv/
+__pycache__/
+*.pyc
+*.pyo

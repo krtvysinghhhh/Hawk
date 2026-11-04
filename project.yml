@@ -2,12 +2,12 @@ name: HAWK
 options:
   bundleIdPrefix: com.hawk
   deploymentTarget:
-    iOS: "17.0"
+    iOS: '17.0'
 settings:
-  SWIFT_VERSION: "6.0"
-  IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+  SWIFT_VERSION: '6.0'
+  IPHONEOS_DEPLOYMENT_TARGET: '17.0'
   PRODUCT_BUNDLE_IDENTIFIER: com.hawk.music
-  CODE_SIGNING_ALLOWED: NO
+  CODE_SIGNING_ALLOWED: false
 packages:
   HAWK:
     path: .
@@ -15,61 +15,67 @@ targets:
   HAWK:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: '17.0'
     sources:
-      - path: App
-      - path: Resources
+    - path: App
+    - path: Resources
     info:
       path: Configuration/Info.plist
       properties:
         CFBundleDisplayName: HAWK
         CFBundleName: HAWK
         CFBundleIdentifier: com.hawk.music
-        CFBundleShortVersionString: "1.4.0"
-        CFBundleVersion: "6"
+        CFBundleShortVersionString: 1.4.0
+        CFBundleVersion: '6'
         CFBundleURLTypes:
-          - CFBundleTypeRole: Editor
-            CFBundleURLName: com.hawk.music
-            CFBundleURLSchemes:
-              - com.hawk.music
+        - CFBundleTypeRole: Editor
+          CFBundleURLName: com.hawk.music
+          CFBundleURLSchemes:
+          - com.hawk.music
+        - CFBundleTypeRole: Editor
+          CFBundleURLName: com.googleusercontent.apps.google-oauth
+          CFBundleURLSchemes:
+          - com.googleusercontent.apps.862376793952-pdvpt1139kcf2mdgpkrqrol2av0ks58d
         LSRequiresIPhoneOS: true
         UIBackgroundModes:
-          - audio
+        - audio
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
-          - arm64
+        - arm64
         UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-        NSAppleMusicUsageDescription: "HAWK uses Apple Music to play songs and search the music catalog."
+        - UIInterfaceOrientationPortrait
+        NSAppleMusicUsageDescription: HAWK uses Apple Music to play songs and search
+          the music catalog.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
           UISceneConfigurations:
             CPTemplateApplicationSceneSessionRoleApplication:
-              - UISceneClassName: CPTemplateApplicationScene
-                UISceneConfigurationName: CarPlayConfiguration
-                UISceneDelegateClassName: HAWK.HawkCarPlaySceneDelegate
+            - UISceneClassName: CPTemplateApplicationScene
+              UISceneConfigurationName: CarPlayConfiguration
+              UISceneDelegateClassName: HAWK.HawkCarPlaySceneDelegate
+        GoogleClientID: 862376793952-pdvpt1139kcf2mdgpkrqrol2av0ks58d.apps.googleusercontent.com
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.hawk.music
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       GENERATE_INFOPLIST_FILE: false
       INFOPLIST_FILE: Configuration/Info.plist
-      ENABLE_PREVIEWS: YES
+      ENABLE_PREVIEWS: true
     dependencies:
-      - package: HAWK
-        product: HawkCore
-      - package: HAWK
-        product: HawkSecurity
-      - package: HAWK
-        product: HawkNetworking
-      - package: HAWK
-        product: HawkSources
-      - package: HAWK
-        product: HawkPlayback
-      - package: HAWK
-        product: HawkLyrics
-      - package: HAWK
-        product: HawkStats
-      - package: HAWK
-        product: HawkUI
+    - package: HAWK
+      product: HawkCore
+    - package: HAWK
+      product: HawkSecurity
+    - package: HAWK
+      product: HawkNetworking
+    - package: HAWK
+      product: HawkSources
+    - package: HAWK
+      product: HawkPlayback
+    - package: HAWK
+      product: HawkLyrics
+    - package: HAWK
+      product: HawkStats
+    - package: HAWK
+      product: HawkUI

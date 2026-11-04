@@ -1,0 +1,2 @@
+# Build-time Python dependencies for HAWK
+pyyaml==6.0.3
