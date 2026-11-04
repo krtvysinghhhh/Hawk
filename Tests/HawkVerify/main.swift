@@ -315,35 +315,61 @@ func runAllVerifications() async {
     let state = GoogleMusicSyncManager.generateStateToken()
     assertTest(.unit, "PKCE cryptographic random state token generated (43 chars)", state.count == 43)
 
+    // Client ID Format Validation & Dummy Rejection
+    let emptyResult = GoogleMusicSyncManager.validateClientIdFormat("")
+    assertTest(.unit, "validateClientIdFormat rejects empty string", emptyResult == .failure(.empty))
+
+    let placeholderResult = GoogleMusicSyncManager.validateClientIdFormat("874129582194-hawk-music-player.apps.googleusercontent.com")
+    assertTest(.unit, "validateClientIdFormat strictly rejects dummy placeholder client ID", placeholderResult == .failure(.placeholderForbidden))
+
+    let missingSuffixResult = GoogleMusicSyncManager.validateClientIdFormat("123456-abcdef.com")
+    assertTest(.unit, "validateClientIdFormat rejects client ID without .apps.googleusercontent.com suffix", missingSuffixResult == .failure(.missingGoogleSuffix))
+
+    let missingHyphenResult = GoogleMusicSyncManager.validateClientIdFormat("123456abcdef.apps.googleusercontent.com")
+    assertTest(.unit, "validateClientIdFormat rejects prefix without project number hyphen", missingHyphenResult == .failure(.invalidPrefixFormat))
+
+    let nonNumericProject = GoogleMusicSyncManager.validateClientIdFormat("abc-123.apps.googleusercontent.com")
+    assertTest(.unit, "validateClientIdFormat rejects non-numeric project number", nonNumericProject == .failure(.missingNumericProjectNumber))
+
+    let validSampleClientId = "874129582194-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6.apps.googleusercontent.com"
+    let validResult = GoogleMusicSyncManager.validateClientIdFormat(validSampleClientId)
+    assertTest(.unit, "validateClientIdFormat accepts genuine Google Cloud iOS client ID", validResult == .success(validSampleClientId))
+
     // RFC 8252 Reversed Client ID Scheme & Redirect URI Derivation
-    let sampleClientId = "123456789-abcdef.apps.googleusercontent.com"
-    let derivedScheme = GoogleMusicSyncManager.reversedScheme(for: sampleClientId)
-    assertTest(.unit, "Reversed Client ID scheme derived according to RFC 8252", derivedScheme == "com.googleusercontent.apps.123456789-abcdef")
+    let derivedScheme = GoogleMusicSyncManager.reversedScheme(for: validSampleClientId)
+    assertTest(.unit, "Reversed Client ID scheme derived according to RFC 8252", derivedScheme == "com.googleusercontent.apps.874129582194-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6")
 
-    let derivedRedirectUri = GoogleMusicSyncManager.redirectUri(for: sampleClientId)
-    assertTest(.unit, "Redirect URI derived according to RFC 8252", derivedRedirectUri == "com.googleusercontent.apps.123456789-abcdef:/oauth2callback")
+    let derivedRedirectUri = GoogleMusicSyncManager.redirectUri(for: validSampleClientId)
+    assertTest(.unit, "Redirect URI derived according to RFC 8252 with /oauth2callback", derivedRedirectUri == "com.googleusercontent.apps.874129582194-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6:/oauth2callback")
 
-    // Dynamic Client ID Configuration
+    // Unconfigured Client ID State & Prevention of Silent Placeholder Submissions
     let googleSync = GoogleMusicSyncManager.shared
-    let initialClientId = googleSync.effectiveClientId
-    assertTest(.unit, "Initial Google Client ID is configured and non-empty", !initialClientId.isEmpty)
+    googleSync.setCustomClientId(nil)
+    assertTest(.unit, "Unconfigured client ID produces .notConfigured state", googleSync.configuredClientId == nil && googleSync.configurationState == .notConfigured)
 
-    googleSync.setCustomClientId("987654321-userclient.apps.googleusercontent.com")
-    assertTest(.unit, "Custom Google Client ID successfully set and active", googleSync.effectiveClientId == "987654321-userclient.apps.googleusercontent.com")
-    assertTest(.unit, "Active reversed scheme updates to match custom client ID", googleSync.currentReversedScheme == "com.googleusercontent.apps.987654321-userclient")
-    assertTest(.unit, "Active redirect URI updates to match custom client ID", googleSync.currentRedirectUri == "com.googleusercontent.apps.987654321-userclient:/oauth2callback")
-    googleSync.setCustomClientId(nil) // Reset back to default
-    assertTest(.unit, "Clearing custom Client ID restores default configuration", googleSync.effectiveClientId == initialClientId)
+    // Custom Client ID Configuration & Bypass Flag
+    GoogleMusicSyncManager.bypassBundleSchemeCheckForTesting = true
+    googleSync.setCustomClientId(validSampleClientId)
+    assertTest(.unit, "Custom Google Client ID successfully set and active", googleSync.configuredClientId == validSampleClientId)
+    assertTest(.unit, "ConfigurationState transitions to .ready when valid and scheme verified", googleSync.isConfiguredAndReady)
+    googleSync.setCustomClientId(nil) // Reset back to clean state
+    assertTest(.unit, "Clearing custom Client ID restores clean unconfigured state", googleSync.configuredClientId == nil)
+    GoogleMusicSyncManager.bypassBundleSchemeCheckForTesting = false
 
     // Test valid OAuth callback with Google reversed scheme
-    let googleCallbackURL = URL(string: "com.googleusercontent.apps.123456789-abcdef:/oauth2callback?code=4/0Abc123&state=\(state)")!
-    let validatedGoogleCode = try? GoogleMusicSyncManager.validateOAuthCallback(url: googleCallbackURL, expectedState: state)
-    assertTest(.unit, "OAuth callback validation succeeds for Google reversed scheme", validatedGoogleCode == "4/0Abc123")
+    let googleCallbackURL = URL(string: "com.googleusercontent.apps.874129582194-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6:/oauth2callback?code=4/0Abc123&state=\(state)")!
+    let validatedGoogleCode = try? GoogleMusicSyncManager.validateOAuthCallback(url: googleCallbackURL, expectedState: state, allowedScheme: "com.googleusercontent.apps.874129582194-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6")
+    assertTest(.unit, "OAuth callback validation succeeds for matching Google reversed scheme and /oauth2callback path", validatedGoogleCode == "4/0Abc123")
+
+    // Test callback with invalid path
+    let invalidPathURL = URL(string: "com.googleusercontent.apps.874129582194-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6:/invalid_path?code=4/0Abc123&state=\(state)")!
+    let invalidPathPass = (try? GoogleMusicSyncManager.validateOAuthCallback(url: invalidPathURL, expectedState: state, allowedScheme: "com.googleusercontent.apps.874129582194-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6")) == nil
+    assertTest(.unit, "OAuth callback validation strictly rejects invalid redirect path", invalidPathPass)
 
     // Test valid OAuth callback with com.hawk.music scheme
     let validCallbackURL = URL(string: "com.hawk.music:/oauth2callback?code=4/0Abc123&state=\(state)")!
     let validatedCode = try? GoogleMusicSyncManager.validateOAuthCallback(url: validCallbackURL, expectedState: state)
-    assertTest(.unit, "OAuth callback validation succeeds for matching state & code", validatedCode == "4/0Abc123")
+    assertTest(.unit, "OAuth callback validation succeeds for com.hawk.music fallback scheme", validatedCode == "4/0Abc123")
 
     // Test missing state callback
     let missingStateURL = URL(string: "com.hawk.music:/oauth2callback?code=4/0Abc123")!

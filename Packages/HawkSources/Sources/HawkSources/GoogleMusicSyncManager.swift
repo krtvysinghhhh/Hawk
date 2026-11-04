@@ -29,47 +29,153 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     private let httpClient = HawkHttpClient.shared
 
     // Google OAuth 2.0 configuration
-    public static let defaultClientId = "874129582194-hawk-music-player.apps.googleusercontent.com"
     private let scopes = [
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/youtube.readonly"
     ].joined(separator: " ")
 
-    /// Custom Google Cloud iOS Client ID configured by developer/user.
-    public var customClientId: String? {
-        get {
-            if let custom = UserDefaults.standard.string(forKey: "hawk_google_custom_client_id"),
-               !custom.trimmingCharacters(in: .whitespaces).isEmpty {
-                return custom.trimmingCharacters(in: .whitespaces)
-            }
-            return nil
-        }
+    /// Represents the strict configuration and readiness state of Google OAuth in this build.
+    public enum OAuthConfigurationState: Equatable, Sendable {
+        case notConfigured
+        case invalidFormat(reason: String)
+        case schemeNotRegisteredInBuild(expectedScheme: String, registeredSchemes: [String])
+        case ready(clientId: String, reversedScheme: String, redirectUri: String)
     }
 
-    /// Resolves active Google OAuth Client ID with multi-tier resolution:
-    /// 1. User/Developer custom Client ID stored in UserDefaults / Keychain.
+    /// Internal test flag allowing unit tests in CLI/SPM environments to bypass iOS Bundle.main check.
+    public static var bypassBundleSchemeCheckForTesting: Bool = false
+
+    /// Resolves active Google OAuth Client ID with single authoritative configuration source:
+    /// 1. User/Developer custom Client ID stored in UserDefaults (`hawk_google_client_id`).
     /// 2. Bundle Info.plist (`GoogleClientID` key).
-    /// 3. Default fallback client ID.
-    public var effectiveClientId: String {
-        if let custom = customClientId {
-            return custom
+    /// Returns nil if neither source is configured or if the value is empty/placeholder.
+    public var configuredClientId: String? {
+        if let custom = UserDefaults.standard.string(forKey: "hawk_google_client_id"),
+           !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return custom.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let bundleId = Bundle.main.object(forInfoDictionaryKey: "GoogleClientID") as? String,
-           !bundleId.trimmingCharacters(in: .whitespaces).isEmpty {
-            return bundleId.trimmingCharacters(in: .whitespaces)
+           !bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return Self.defaultClientId
+        return nil
     }
 
-    /// Indicates whether the active client ID is the unconfigured default placeholder.
-    public var isUsingDefaultPlaceholder: Bool {
-        effectiveClientId == Self.defaultClientId
+    /// Specific errors encountered when validating a Google Cloud Client ID string.
+    public enum ClientIdValidationError: Error, CustomStringConvertible, Sendable, Equatable {
+        case empty
+        case placeholderForbidden
+        case missingGoogleSuffix
+        case invalidPrefixFormat
+        case missingNumericProjectNumber
+
+        public var description: String {
+            switch self {
+            case .empty:
+                return "Client ID cannot be empty."
+            case .placeholderForbidden:
+                return "Placeholder Client IDs are not permitted. A genuine Google Cloud iOS Client ID is required."
+            case .missingGoogleSuffix:
+                return "Google Client ID must end with '.apps.googleusercontent.com'."
+            case .invalidPrefixFormat:
+                return "Google Client ID prefix must follow '<project-number>-<client-hash>' format."
+            case .missingNumericProjectNumber:
+                return "Google Client ID must begin with a numeric Google Cloud project number."
+            }
+        }
+    }
+
+    /// Validates client ID format against genuine Google Cloud iOS OAuth patterns.
+    public static func validateClientIdFormat(_ id: String) -> Result<String, ClientIdValidationError> {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return .failure(.empty)
+        }
+        let lower = trimmed.lowercased()
+        if lower.contains("hawk-music-player") || lower.contains("placeholder") || lower.contains("your_client_id") || lower.contains("example") || lower.contains("dummy") {
+            return .failure(.placeholderForbidden)
+        }
+        guard trimmed.hasSuffix(".apps.googleusercontent.com") else {
+            return .failure(.missingGoogleSuffix)
+        }
+        let prefix = String(trimmed.dropLast(".apps.googleusercontent.com".count))
+        guard prefix.contains("-") else {
+            return .failure(.invalidPrefixFormat)
+        }
+        let parts = prefix.split(separator: "-", maxSplits: 1)
+        guard let projectNumber = parts.first, CharacterSet.decimalDigits.isSuperset(of: CharacterSet(charactersIn: String(projectNumber))) else {
+            return .failure(.missingNumericProjectNumber)
+        }
+        return .success(trimmed)
+    }
+
+    /// Returns URL schemes registered in the installed application's CFBundleURLTypes.
+    public static func registeredBundleSchemes() -> [String] {
+        guard let urlTypes = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] else {
+            return []
+        }
+        var result: [String] = []
+        for dict in urlTypes {
+            if let schemes = dict["CFBundleURLSchemes"] as? [String] {
+                result.append(contentsOf: schemes)
+            }
+        }
+        return result
+    }
+
+    /// Verifies if a given scheme is registered in the compiled application bundle.
+    public static func isSchemeRegisteredInBundle(_ scheme: String) -> Bool {
+        let lower = scheme.lowercased()
+        let registered = registeredBundleSchemes().map { $0.lowercased() }
+        return registered.contains(lower)
+    }
+
+    /// Current validated configuration state for Google OAuth.
+    public var configurationState: OAuthConfigurationState {
+        guard let raw = configuredClientId, !raw.isEmpty else {
+            return .notConfigured
+        }
+        switch Self.validateClientIdFormat(raw) {
+        case .failure(let error):
+            return .invalidFormat(reason: error.description)
+        case .success(let validId):
+            let scheme = Self.reversedScheme(for: validId)
+            let isRegistered = Self.bypassBundleSchemeCheckForTesting || Self.isSchemeRegisteredInBundle(scheme)
+            if isRegistered {
+                return .ready(
+                    clientId: validId,
+                    reversedScheme: scheme,
+                    redirectUri: Self.redirectUri(for: validId)
+                )
+            } else {
+                return .schemeNotRegisteredInBuild(
+                    expectedScheme: scheme,
+                    registeredSchemes: Self.registeredBundleSchemes()
+                )
+            }
+        }
+    }
+
+    /// Indicates whether a valid client ID is configured and its reversed scheme is registered in the build.
+    public var isConfiguredAndReady: Bool {
+        if case .ready = configurationState { return true }
+        return false
+    }
+
+    /// Updates or clears custom Google Cloud OAuth Client ID in authoritative storage (UserDefaults).
+    public func setCustomClientId(_ id: String?) {
+        let cleaned = id?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cleaned = cleaned, !cleaned.isEmpty {
+            UserDefaults.standard.set(cleaned, forKey: "hawk_google_client_id")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "hawk_google_client_id")
+        }
     }
 
     /// Derives standard Google iOS reversed Client ID scheme (RFC 8252) from Client ID.
     /// E.g. `123456-abc.apps.googleusercontent.com` -> `com.googleusercontent.apps.123456-abc`
     public static func reversedScheme(for clientId: String) -> String {
-        let trimmed = clientId.trimmingCharacters(in: .whitespaces)
+        let trimmed = clientId.trimmingCharacters(in: .whitespacesAndNewlines)
         let suffix = ".apps.googleusercontent.com"
         if trimmed.hasSuffix(suffix) {
             let prefix = String(trimmed.dropLast(suffix.count))
@@ -82,32 +188,6 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     public static func redirectUri(for clientId: String) -> String {
         let scheme = reversedScheme(for: clientId)
         return "\(scheme):/oauth2callback"
-    }
-
-    /// Current reversed URL scheme used for ASWebAuthenticationSession callback.
-    public var currentReversedScheme: String {
-        Self.reversedScheme(for: effectiveClientId)
-    }
-
-    /// Current redirect URI configured for authorization request and token exchange.
-    public var currentRedirectUri: String {
-        Self.redirectUri(for: effectiveClientId)
-    }
-
-    /// Updates or clears custom Google Cloud OAuth Client ID in secure storage.
-    public func setCustomClientId(_ id: String?) {
-        let cleaned = id?.trimmingCharacters(in: .whitespaces)
-        if let cleaned = cleaned, !cleaned.isEmpty {
-            UserDefaults.standard.set(cleaned, forKey: "hawk_google_custom_client_id")
-            Task {
-                try? await keychain.saveString(key: "google_client_id", value: cleaned)
-            }
-        } else {
-            UserDefaults.standard.removeObject(forKey: "hawk_google_custom_client_id")
-            Task {
-                try? await keychain.delete(key: "google_client_id")
-            }
-        }
     }
 
     /// Maps Google OAuth 2.0 error codes to user-friendly, actionable diagnostic guidance.
@@ -176,18 +256,27 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     }
 
     // MARK: - OAuth 2.0 Callback Validation (Public for Testing)
-    /// Validates an incoming OAuth 2.0 callback URL against state, redirect scheme, and error conditions.
+    /// Validates an incoming OAuth 2.0 callback URL against state, redirect scheme, path, and error conditions.
     public static func validateOAuthCallback(url: URL, expectedState: String, allowedScheme: String? = nil) throws -> String {
         guard let scheme = url.scheme?.lowercased() else {
             throw HawkError.authRequired("OAuth callback missing URL scheme")
         }
 
-        let isGoogleScheme = scheme.starts(with: "com.googleusercontent.apps.")
-        let isHawkScheme = scheme == "com.hawk.music"
-        let matchesAllowed = (allowedScheme != nil && scheme == allowedScheme?.lowercased())
+        if let expected = allowedScheme?.lowercased() {
+            guard scheme == expected || scheme == "com.hawk.music" else {
+                throw HawkError.authRequired("Invalid OAuth callback URL scheme: '\(scheme)'. Expected: '\(expected)'.")
+            }
+        } else {
+            let isGoogleScheme = scheme.starts(with: "com.googleusercontent.apps.")
+            let isHawkScheme = scheme == "com.hawk.music"
+            guard isGoogleScheme || isHawkScheme else {
+                throw HawkError.authRequired("Invalid OAuth callback URL scheme: \(scheme)")
+            }
+        }
 
-        guard isGoogleScheme || isHawkScheme || matchesAllowed else {
-            throw HawkError.authRequired("Invalid OAuth callback URL scheme: \(scheme)")
+        let path = url.path
+        if !path.isEmpty && path != "/oauth2callback" && path != "/" {
+            throw HawkError.authRequired("Invalid OAuth callback URL path: '\(path)'. Expected '/oauth2callback'")
         }
 
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -219,9 +308,20 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     // MARK: - Authentication
     public func startGoogleSignIn() async throws {
-        let activeClientId = effectiveClientId
-        let activeRedirectUri = currentRedirectUri
-        let activeReversedScheme = currentReversedScheme
+        guard case .ready(let activeClientId, let activeReversedScheme, let activeRedirectUri) = configurationState else {
+            switch configurationState {
+            case .notConfigured:
+                throw HawkError.authRequired("Google Cloud iOS Client ID is not configured. Please open Settings and configure an authorized iOS Client ID.")
+            case .invalidFormat(let reason):
+                throw HawkError.authRequired("Invalid Google Client ID: \(reason)")
+            case .schemeNotRegisteredInBuild(let expectedScheme, let registered):
+                let regList = registered.isEmpty ? "None" : registered.joined(separator: ", ")
+                throw HawkError.authRequired("Reversed scheme '\(expectedScheme)' is not registered in this installed build's Info.plist (Registered: [\(regList)]). Rebuilding HAWK with this Client ID in project.yml is required for iOS URL scheme routing.")
+            case .ready:
+                break
+            }
+            return
+        }
 
         // Prepare PKCE code verifier and challenge (RFC 7636)
         let verifier = Self.generateCodeVerifier()
@@ -366,7 +466,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
-        let activeClientId = effectiveClientId
+        guard let activeClientId = configuredClientId, !activeClientId.isEmpty else {
+            throw HawkError.authRequired("Cannot refresh token: Google OAuth Client ID is not configured.")
+        }
 
         let bodyParams = [
             "client_id": activeClientId,
@@ -423,8 +525,10 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
-        let activeClientId = clientId ?? effectiveClientId
-        let activeRedirectUri = redirectUri ?? currentRedirectUri
+        guard let activeClientId = clientId ?? configuredClientId, !activeClientId.isEmpty else {
+            throw HawkError.authRequired("Cannot exchange authorization code: Google OAuth Client ID is not configured.")
+        }
+        let activeRedirectUri = redirectUri ?? Self.redirectUri(for: activeClientId)
 
         let bodyParams = [
             "code": code,

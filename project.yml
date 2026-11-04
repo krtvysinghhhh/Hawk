@@ -32,11 +32,6 @@ targets:
             CFBundleURLName: com.hawk.music
             CFBundleURLSchemes:
               - com.hawk.music
-          - CFBundleTypeRole: Editor
-            CFBundleURLName: com.googleusercontent.apps.google-oauth
-            CFBundleURLSchemes:
-              - com.googleusercontent.apps.874129582194-hawk-music-player
-        GoogleClientID: "874129582194-hawk-music-player.apps.googleusercontent.com"
         LSRequiresIPhoneOS: true
         UIBackgroundModes:
           - audio

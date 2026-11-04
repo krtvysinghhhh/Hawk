@@ -72,49 +72,59 @@ public struct GoogleYouTubeMusicSettingsView: View {
                                 .foregroundColor(HawkTheme.textSecondary)
 
                             Button {
-                                signInWithGoogle()
+                                if syncManager.isConfiguredAndReady {
+                                    signInWithGoogle()
+                                } else {
+                                    customClientIdInput = syncManager.configuredClientId ?? ""
+                                    showClientIdSheet = true
+                                }
                             } label: {
                                 HStack(spacing: 10) {
                                     if isSigningIn {
                                         ProgressView()
                                             .tint(.white)
                                     } else {
-                                        Image(systemName: "g.circle.fill")
+                                        Image(systemName: syncManager.isConfiguredAndReady ? "g.circle.fill" : "gearshape.fill")
                                             .font(.title3)
                                     }
-                                    Text("Continue with Google")
+                                    Text(syncManager.isConfiguredAndReady ? "Continue with Google" : "Configure Google Client ID")
                                         .font(.headline)
                                 }
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 48)
-                                .background(HawkTheme.primaryAccent)
+                                .background(syncManager.isConfiguredAndReady ? HawkTheme.primaryAccent : HawkTheme.cardBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(syncManager.isConfiguredAndReady ? Color.clear : HawkTheme.primaryAccent, lineWidth: 1)
+                                )
                                 .cornerRadius(12)
                             }
                             .buttonStyle(.plain)
                             .disabled(isSigningIn)
 
-                            // Client ID Status & Configuration Card
-                            if syncManager.isUsingDefaultPlaceholder {
+                            // MARK: Client ID Status Card
+                            switch syncManager.configurationState {
+                            case .notConfigured:
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack(spacing: 8) {
-                                        Image(systemName: "info.circle.fill")
+                                        Image(systemName: "exclamationmark.circle.fill")
                                             .foregroundColor(.orange)
-                                        Text("Google Cloud iOS Client ID")
+                                        Text("Google Cloud iOS Client ID Required")
                                             .font(.system(size: 13, weight: .semibold))
                                             .foregroundColor(HawkTheme.textPrimary)
                                     }
-                                    Text("To sign in on physical devices, configure your Google Cloud iOS Client ID registered for 'com.hawk.music'.")
+                                    Text("An authorized iOS Client ID registered for 'com.hawk.music' is required to authenticate with Google.")
                                         .font(.caption)
                                         .foregroundColor(HawkTheme.textSecondary)
 
                                     Button {
-                                        customClientIdInput = syncManager.customClientId ?? ""
+                                        customClientIdInput = ""
                                         showClientIdSheet = true
                                     } label: {
                                         HStack(spacing: 6) {
                                             Image(systemName: "slider.horizontal.3")
-                                            Text("Configure Client ID")
+                                            Text("Setup Client ID")
                                         }
                                         .font(.caption)
                                         .fontWeight(.semibold)
@@ -128,23 +138,75 @@ public struct GoogleYouTubeMusicSettingsView: View {
                                 .padding(12)
                                 .background(HawkTheme.cardBackground)
                                 .cornerRadius(12)
-                            } else {
+
+                            case .invalidFormat(let reason):
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "xmark.octagon.fill")
+                                            .foregroundColor(.red)
+                                        Text("Invalid Client ID Format")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(HawkTheme.textPrimary)
+                                    }
+                                    Text(reason)
+                                        .font(.caption)
+                                        .foregroundColor(HawkTheme.textSecondary)
+
+                                    Button("Edit Client ID") {
+                                        customClientIdInput = syncManager.configuredClientId ?? ""
+                                        showClientIdSheet = true
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                                }
+                                .padding(12)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(12)
+
+                            case .schemeNotRegisteredInBuild(let expectedScheme, _):
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundColor(.yellow)
+                                        Text("Build Update Required")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(HawkTheme.textPrimary)
+                                    }
+                                    Text("Reversed scheme '\(expectedScheme)' is not registered in this installed build's Info.plist. A new build configured with this Client ID in project.yml is required.")
+                                        .font(.caption)
+                                        .foregroundColor(HawkTheme.textSecondary)
+
+                                    Button("View Configuration Instructions") {
+                                        customClientIdInput = syncManager.configuredClientId ?? ""
+                                        showClientIdSheet = true
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                                }
+                                .padding(12)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(12)
+
+                            case .ready(let clientId, let scheme, _):
                                 HStack {
-                                    Image(systemName: "checkmark.circle.fill")
+                                    Image(systemName: "checkmark.seal.fill")
                                         .foregroundColor(.green)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Custom Client ID Active")
+                                        Text("Client ID Ready & Registered")
                                             .font(.caption)
                                             .fontWeight(.semibold)
                                             .foregroundColor(HawkTheme.textPrimary)
-                                        Text(syncManager.effectiveClientId)
+                                        Text(clientId)
                                             .font(.system(size: 10, design: .monospaced))
                                             .foregroundColor(HawkTheme.textTertiary)
                                             .lineLimit(1)
+                                        Text("Scheme: \(scheme)")
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundColor(HawkTheme.textTertiary)
                                     }
                                     Spacer()
                                     Button("Edit") {
-                                        customClientIdInput = syncManager.customClientId ?? ""
+                                        customClientIdInput = syncManager.configuredClientId ?? ""
                                         showClientIdSheet = true
                                     }
                                     .font(.caption)
@@ -157,9 +219,10 @@ public struct GoogleYouTubeMusicSettingsView: View {
 
                             HStack(spacing: 16) {
                                 Button {
+                                    customClientIdInput = syncManager.configuredClientId ?? ""
                                     showClientIdSheet = true
                                 } label: {
-                                    Text("OAuth Settings")
+                                    Text("Client ID Settings")
                                         .font(.caption)
                                         .foregroundColor(HawkTheme.textTertiary)
                                         .underline()
@@ -168,7 +231,7 @@ public struct GoogleYouTubeMusicSettingsView: View {
                                 Button {
                                     showManualTokenSheet = true
                                 } label: {
-                                    Text("Manual Token Input")
+                                    Text("Direct Token / Cookie Input")
                                         .font(.caption)
                                         .foregroundColor(HawkTheme.textTertiary)
                                         .underline()
@@ -216,22 +279,22 @@ public struct GoogleYouTubeMusicSettingsView: View {
                     }
                 }
 
-                // MARK: 3. Music Scope & API Disclosure
-                Section(header: Text("Data Scope & Privacy").foregroundColor(HawkTheme.textSecondary)) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Strict Music-Only Scope", systemImage: "checkmark.shield.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(HawkTheme.textPrimary)
-                        Text("HAWK only accesses your music playlists and liked songs. It never accesses your watch history, video subscriptions, channels, or personal comments.")
+                // MARK: 3. API Capabilities & Technical Limitations
+                Section(header: Text("API Capabilities & Limitations").foregroundColor(HawkTheme.textSecondary)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Supported via YouTube Data API v3", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.green)
+                        Text("• Authenticated account email and connection verification.\n• User's YouTube playlists and track metadata.\n• Liked music videos (filtered by Category 10 Music).\n• Audio stream matching via HAWK's high-fidelity resolver.")
                             .font(.caption)
                             .foregroundColor(HawkTheme.textSecondary)
 
-                        Divider().padding(.vertical, 4)
+                        Divider().padding(.vertical, 2)
 
-                        Label("Supported Audio Matching", systemImage: "info.circle.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(HawkTheme.textPrimary)
-                        Text("Imported tracks are stored as genuine library records. When streamed, HAWK matches each track with playable high-bitrate sources. Tracks without accessible sources display an explicit unavailable badge.")
+                        Label("Unsupported / Service Limitations", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.orange)
+                        Text("• Personalized algorithmic radios (Supermix, Discover Mix) are proprietary to YouTube Music and unavailable via standard YouTube Data API v3.\n• Direct YouTube video audio streams cannot be streamed directly from YouTube; tracks are matched with high-bitrate audio sources.")
                             .font(.caption)
                             .foregroundColor(HawkTheme.textSecondary)
                     }
@@ -253,9 +316,9 @@ public struct GoogleYouTubeMusicSettingsView: View {
         }
         .alert("Google Authentication", isPresented: $showErrorAlert) {
             Button("OK", role: .cancel) {}
-            if syncManager.isUsingDefaultPlaceholder {
+            if !syncManager.isConfiguredAndReady {
                 Button("Configure Client ID") {
-                    customClientIdInput = syncManager.customClientId ?? ""
+                    customClientIdInput = syncManager.configuredClientId ?? ""
                     showClientIdSheet = true
                 }
             }
@@ -280,7 +343,7 @@ public struct GoogleYouTubeMusicSettingsView: View {
                             .font(.headline)
                             .foregroundColor(HawkTheme.textPrimary)
 
-                        Text("Configure your native iOS OAuth Client ID created in Google Cloud Console. HAWK uses RFC 8252 PKCE without requiring any client secrets.")
+                        Text("Configure your native iOS OAuth Client ID created in Google Cloud Console. HAWK strictly enforces RFC 8252 PKCE with no client secrets.")
                             .font(.caption)
                             .foregroundColor(HawkTheme.textSecondary)
 
@@ -290,7 +353,7 @@ public struct GoogleYouTubeMusicSettingsView: View {
                                 .fontWeight(.medium)
                                 .foregroundColor(HawkTheme.textSecondary)
 
-                            TextField("e.g. 123456-abc.apps.googleusercontent.com", text: $customClientIdInput)
+                            TextField("e.g. 123456789012-abc.apps.googleusercontent.com", text: $customClientIdInput)
                                 .padding()
                                 .background(HawkTheme.cardBackground)
                                 .cornerRadius(10)
@@ -301,33 +364,66 @@ public struct GoogleYouTubeMusicSettingsView: View {
 #endif
                         }
 
-                        // Derived Dynamic OAuth Configuration Preview
-                        let previewId = customClientIdInput.trimmingCharacters(in: .whitespaces).isEmpty ? syncManager.effectiveClientId : customClientIdInput.trimmingCharacters(in: .whitespaces)
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Derived RFC 8252 OAuth Configuration:")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(HawkTheme.textPrimary)
+                        // Live Validation & Scheme Status
+                        let inputTrimmed = customClientIdInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !inputTrimmed.isEmpty {
+                            let validation = GoogleMusicSyncManager.validateClientIdFormat(inputTrimmed)
+                            switch validation {
+                            case .failure(let err):
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.red)
+                                    Text(err.description)
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                }
+                                .padding(10)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(8)
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Reversed Callback Scheme:")
-                                    .font(.caption2)
-                                    .foregroundColor(HawkTheme.textTertiary)
-                                Text(GoogleMusicSyncManager.reversedScheme(for: previewId))
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(HawkTheme.primaryAccent)
+                            case .success(let validId):
+                                let scheme = GoogleMusicSyncManager.reversedScheme(for: validId)
+                                let redirect = GoogleMusicSyncManager.redirectUri(for: validId)
+                                let isRegistered = GoogleMusicSyncManager.isSchemeRegisteredInBundle(scheme)
 
-                                Text("Redirect URI:")
-                                    .font(.caption2)
-                                    .foregroundColor(HawkTheme.textTertiary)
-                                    .padding(.top, 2)
-                                Text(GoogleMusicSyncManager.redirectUri(for: previewId))
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(HawkTheme.primaryAccent)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: isRegistered ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                            .foregroundColor(isRegistered ? .green : .yellow)
+                                        Text(isRegistered ? "Reversed Scheme Registered in Build" : "Reversed Scheme Not Registered in Build")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(isRegistered ? .green : .yellow)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Expected Reversed Scheme:")
+                                            .font(.caption2)
+                                            .foregroundColor(HawkTheme.textTertiary)
+                                        Text(scheme)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(HawkTheme.primaryAccent)
+
+                                        Text("Redirect URI:")
+                                            .font(.caption2)
+                                            .foregroundColor(HawkTheme.textTertiary)
+                                            .padding(.top, 2)
+                                        Text(redirect)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(HawkTheme.primaryAccent)
+                                    }
+
+                                    if !isRegistered {
+                                        Text("iOS requires this custom scheme to be compiled into Info.plist (CFBundleURLTypes). To use this Client ID, rebuild HAWK with this Client ID in project.yml.")
+                                            .font(.caption)
+                                            .foregroundColor(.yellow)
+                                            .padding(.top, 2)
+                                    }
+                                }
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(HawkTheme.cardBackground.opacity(0.8))
+                                .cornerRadius(8)
                             }
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(HawkTheme.cardBackground.opacity(0.6))
-                            .cornerRadius(8)
                         }
 
                         // Step-by-Step Google Cloud Console Checklist
@@ -359,9 +455,10 @@ public struct GoogleYouTubeMusicSettingsView: View {
                             .frame(height: 48)
                             .background(HawkTheme.primaryAccent)
                             .cornerRadius(12)
+                            .disabled(inputTrimmed.isEmpty)
 
-                            if syncManager.customClientId != nil {
-                                Button("Reset Default") {
+                            if syncManager.configuredClientId != nil {
+                                Button("Clear") {
                                     syncManager.setCustomClientId(nil)
                                     customClientIdInput = ""
                                     showClientIdSheet = false

@@ -32,19 +32,7 @@
 				<string>com.hawk.music</string>
 			</array>
 		</dict>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLName</key>
-			<string>com.googleusercontent.apps.google-oauth</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>com.googleusercontent.apps.874129582194-hawk-music-player</string>
-			</array>
-		</dict>
 	</array>
-	<key>GoogleClientID</key>
-	<string>874129582194-hawk-music-player.apps.googleusercontent.com</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
