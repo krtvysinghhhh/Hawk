@@ -16,6 +16,7 @@
 		69BEE4C02B29025AA3AAD4BA /* HawkPlayback in Frameworks */ = {isa = PBXBuildFile; productRef = 1EABF8989A7BE73930BB6686 /* HawkPlayback */; };
 		81D56230A2D810F97629D8A8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE84E6D74E8019C68F67C559 /* Assets.xcassets */; };
 		8D121DFA972DF077FA27EBBA /* HawkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD86C2949930F5B1FC77DD02 /* HawkApp.swift */; };
+		C04E8608568A631C242759F1 /* hawk-glyph.png in Resources */ = {isa = PBXBuildFile; fileRef = 02436C40EF406790B61EFF34 /* hawk-glyph.png */; };
 		D563B0C0059348645D034560 /* HawkCore in Frameworks */ = {isa = PBXBuildFile; productRef = D3E918C490B4AC06DEE03AF5 /* HawkCore */; };
 		EA843EAD36510AC7383AA03F /* HawkUI in Frameworks */ = {isa = PBXBuildFile; productRef = CACFE8D3927BD89A97C0BB17 /* HawkUI */; };
 		EF4A2944A03F9D179AB1E96D /* HawkStats in Frameworks */ = {isa = PBXBuildFile; productRef = A52CFF1EEFDE5B37984F0D66 /* HawkStats */; };
@@ -23,6 +24,7 @@
 
 /* Begin PBXFileReference section */
 		004AFC87EAF7C4F734697A82 /* HAWK */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HAWK; path = .; sourceTree = SOURCE_ROOT; };
+		02436C40EF406790B61EFF34 /* hawk-glyph.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "hawk-glyph.png"; sourceTree = "<group>"; };
 		3168429F7F832107F60CCC95 /* HAWK.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = HAWK.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A922C8B8E775C7A3959ADDD /* HawkCarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HawkCarPlaySceneDelegate.swift; sourceTree = "<group>"; };
 		71C2D05776C79CB810ABB5AE /* hawk-logo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "hawk-logo.png"; sourceTree = "<group>"; };
@@ -53,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				CE84E6D74E8019C68F67C559 /* Assets.xcassets */,
+				02436C40EF406790B61EFF34 /* hawk-glyph.png */,
 				71C2D05776C79CB810ABB5AE /* hawk-logo.png */,
 			);
 			path = Resources;
@@ -162,6 +165,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				81D56230A2D810F97629D8A8 /* Assets.xcassets in Resources */,
+				C04E8608568A631C242759F1 /* hawk-glyph.png in Resources */,
 				61F57933F3BFEE2EEED2C893 /* hawk-logo.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

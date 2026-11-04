@@ -157,14 +157,27 @@ struct HomeView: View {
                 } else {
                     ScrollView(showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 28) {
-                            // Top Dynamic Greeting Header
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(greeting)
-                                    .font(.system(size: 32, weight: .bold))
-                                    .foregroundColor(HawkTheme.textPrimary)
-                                Text("Handcrafted for you on HAWK")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(HawkTheme.textTertiary)
+                            // Top Dynamic Greeting Header & Official Brand Mark
+                            HStack(alignment: .center) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(greeting)
+                                        .font(.system(size: 32, weight: .bold))
+                                        .foregroundColor(HawkTheme.textPrimary)
+                                    Text("Handcrafted for you on HAWK")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(HawkTheme.textTertiary)
+                                }
+                                Spacer()
+                                Image("hawk-logo", bundle: .main)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 40, height: 40)
+                                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                            .stroke(HawkTheme.dividerColor, lineWidth: 0.5)
+                                    )
+                                    .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
                             }
                             .padding(.horizontal, 20)
                             .padding(.top, 8)

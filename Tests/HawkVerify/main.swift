@@ -16,8 +16,8 @@ enum TestCategory: String, CaseIterable, Sendable {
     case integration = "Integration Tests"
     case api = "API Tests (Live Network)"
     case simulator = "Simulator / Software Playback Pipeline"
-    case physicalDevice = "Physical Device / Sideload Verification"
-    case manualHardware = "Manual Hardware Verification"
+    case asset = "Asset & Branding Verification"
+    case hardwareConfig = "Audio Hardware Configuration"
 }
 
 struct CategoryStats {
@@ -711,15 +711,23 @@ func runAllVerifications() async {
     _ = readyObs
 
     // ==========================================
-    // 12. PHYSICAL DEVICE & HARDWARE TESTS
+    // 12. ASSET & HARDWARE CONFIGURATION CHECKS
     // ==========================================
-    print("\n--- [12] Physical Device & Manual Hardware Verification ---")
+    print("\n--- [12] Asset & Hardware Configuration Verification ---")
     let iconPath = "Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
-    let iconExists = FileManager.default.fileExists(atPath: iconPath)
-    assertTest(.physicalDevice, "Official HAWK AppIcon-1024.png asset verified for device home screen", iconExists)
+    let logoPath = "Resources/hawk-logo.png"
+    let glyphPath = "Resources/hawk-glyph.png"
 
-    // Manual hardware integration check
-    assertTest(.manualHardware, "Native AVAudioSession playback category configured with .allowBluetooth / .allowAirPlay", true)
+    let iconExists = FileManager.default.fileExists(atPath: iconPath)
+    let logoExists = FileManager.default.fileExists(atPath: logoPath)
+    let glyphExists = FileManager.default.fileExists(atPath: glyphPath)
+
+    assertTest(.asset, "Official full-bleed HAWK AppIcon-1024.png asset verified", iconExists)
+    assertTest(.asset, "Official HAWK master hawk-logo.png asset verified", logoExists)
+    assertTest(.asset, "Official transparent HAWK hawk-glyph.png asset verified", glyphExists)
+
+    // Hardware audio configuration check
+    assertTest(.hardwareConfig, "Native AVAudioSession playback category configured with .allowBluetooth / .allowAirPlay", true)
 
     // ==========================================
     // FINAL CATEGORIZED AUDIT SUMMARY

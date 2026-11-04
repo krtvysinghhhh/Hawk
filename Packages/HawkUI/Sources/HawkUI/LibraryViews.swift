@@ -640,7 +640,11 @@ public struct SettingsView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 48, height: 48)
-                            .cornerRadius(10)
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(HawkTheme.dividerColor, lineWidth: 0.5)
+                            )
                         VStack(alignment: .leading, spacing: 2) {
                             Text("HAWK")
                                 .font(.headline)
