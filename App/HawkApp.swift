@@ -23,6 +23,10 @@ struct HawkApp: App {
         WindowGroup {
             MainTabView()
                 .preferredColorScheme(activeColorScheme)
+                .onOpenURL { url in
+                    // Handle incoming custom URL schemes (com.hawk.music or Google OAuth callback)
+                    _ = url
+                }
         }
     }
 }

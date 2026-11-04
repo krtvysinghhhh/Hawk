@@ -304,9 +304,9 @@ func runAllVerifications() async {
     assertTest(.unit, "UniversalPlaylistImporter sanitizes path traversal tokens (../)", parsedTraversal.tracks.count == 1 && parsedTraversal.tracks[0].title == "Safe Title")
 
     // ==========================================
-    // 6. UNIT TESTS: Google OAuth 2.0 PKCE
+    // 6. UNIT TESTS: Google OAuth 2.0 PKCE & RFC 8252 Compliance
     // ==========================================
-    print("\n--- [6] Unit Tests: Google OAuth 2.0 PKCE Verification ---")
+    print("\n--- [6] Unit Tests: Google OAuth 2.0 PKCE & RFC 8252 Compliance ---")
     let verifier = GoogleMusicSyncManager.generateCodeVerifier()
     assertTest(.unit, "PKCE code_verifier length is 43 chars (RFC 7636)", verifier.count == 43)
     let challenge = GoogleMusicSyncManager.generateCodeChallenge(from: verifier)
@@ -315,7 +315,32 @@ func runAllVerifications() async {
     let state = GoogleMusicSyncManager.generateStateToken()
     assertTest(.unit, "PKCE cryptographic random state token generated (43 chars)", state.count == 43)
 
-    // Test valid OAuth callback
+    // RFC 8252 Reversed Client ID Scheme & Redirect URI Derivation
+    let sampleClientId = "123456789-abcdef.apps.googleusercontent.com"
+    let derivedScheme = GoogleMusicSyncManager.reversedScheme(for: sampleClientId)
+    assertTest(.unit, "Reversed Client ID scheme derived according to RFC 8252", derivedScheme == "com.googleusercontent.apps.123456789-abcdef")
+
+    let derivedRedirectUri = GoogleMusicSyncManager.redirectUri(for: sampleClientId)
+    assertTest(.unit, "Redirect URI derived according to RFC 8252", derivedRedirectUri == "com.googleusercontent.apps.123456789-abcdef:/oauth2callback")
+
+    // Dynamic Client ID Configuration
+    let googleSync = GoogleMusicSyncManager.shared
+    let initialClientId = googleSync.effectiveClientId
+    assertTest(.unit, "Initial Google Client ID is configured and non-empty", !initialClientId.isEmpty)
+
+    googleSync.setCustomClientId("987654321-userclient.apps.googleusercontent.com")
+    assertTest(.unit, "Custom Google Client ID successfully set and active", googleSync.effectiveClientId == "987654321-userclient.apps.googleusercontent.com")
+    assertTest(.unit, "Active reversed scheme updates to match custom client ID", googleSync.currentReversedScheme == "com.googleusercontent.apps.987654321-userclient")
+    assertTest(.unit, "Active redirect URI updates to match custom client ID", googleSync.currentRedirectUri == "com.googleusercontent.apps.987654321-userclient:/oauth2callback")
+    googleSync.setCustomClientId(nil) // Reset back to default
+    assertTest(.unit, "Clearing custom Client ID restores default configuration", googleSync.effectiveClientId == initialClientId)
+
+    // Test valid OAuth callback with Google reversed scheme
+    let googleCallbackURL = URL(string: "com.googleusercontent.apps.123456789-abcdef:/oauth2callback?code=4/0Abc123&state=\(state)")!
+    let validatedGoogleCode = try? GoogleMusicSyncManager.validateOAuthCallback(url: googleCallbackURL, expectedState: state)
+    assertTest(.unit, "OAuth callback validation succeeds for Google reversed scheme", validatedGoogleCode == "4/0Abc123")
+
+    // Test valid OAuth callback with com.hawk.music scheme
     let validCallbackURL = URL(string: "com.hawk.music:/oauth2callback?code=4/0Abc123&state=\(state)")!
     let validatedCode = try? GoogleMusicSyncManager.validateOAuthCallback(url: validCallbackURL, expectedState: state)
     assertTest(.unit, "OAuth callback validation succeeds for matching state & code", validatedCode == "4/0Abc123")
@@ -330,7 +355,29 @@ func runAllVerifications() async {
     let mismatchedPass = (try? GoogleMusicSyncManager.validateOAuthCallback(url: mismatchedStateURL, expectedState: state)) == nil
     assertTest(.unit, "OAuth callback validation rejects mismatched state parameter (CSRF)", mismatchedPass)
 
-    // Test access_denied error callback
+    // Test specific OAuth error mapping
+    let invalidClientMsg = GoogleMusicSyncManager.mapOAuthError(code: "invalid_client")
+    assertTest(.unit, "OAuth error mapping for 'invalid_client' provides actionable guidance with bundle ID", invalidClientMsg.contains("com.hawk.music") && invalidClientMsg.contains("invalid or not found"))
+
+    let deletedClientMsg = GoogleMusicSyncManager.mapOAuthError(code: "deleted_client")
+    assertTest(.unit, "OAuth error mapping for 'deleted_client' advises client deletion", deletedClientMsg.contains("deleted"))
+
+    let redirectMismatchMsg = GoogleMusicSyncManager.mapOAuthError(code: "redirect_uri_mismatch")
+    assertTest(.unit, "OAuth error mapping for 'redirect_uri_mismatch' mentions redirect URI and reversed scheme", redirectMismatchMsg.contains("redirect URI mismatch"))
+
+    let invalidGrantMsg = GoogleMusicSyncManager.mapOAuthError(code: "invalid_grant")
+    assertTest(.unit, "OAuth error mapping for 'invalid_grant' advises code/token expiration", invalidGrantMsg.contains("invalid_grant"))
+
+    let accessDeniedMsg = GoogleMusicSyncManager.mapOAuthError(code: "access_denied")
+    assertTest(.unit, "OAuth error mapping for 'access_denied' handles user cancellation", accessDeniedMsg.contains("cancelled") || accessDeniedMsg.contains("denied"))
+
+    let invalidScopeMsg = GoogleMusicSyncManager.mapOAuthError(code: "invalid_scope")
+    assertTest(.unit, "OAuth error mapping for 'invalid_scope' mentions YouTube Data API v3", invalidScopeMsg.contains("YouTube Data API v3"))
+
+    let unauthorizedClientMsg = GoogleMusicSyncManager.mapOAuthError(code: "unauthorized_client")
+    assertTest(.unit, "OAuth error mapping for 'unauthorized_client' advises iOS client type", unauthorizedClientMsg.contains("iOS"))
+
+    // Test access_denied error callback rejection
     let errorCallbackURL = URL(string: "com.hawk.music:/oauth2callback?error=access_denied&state=\(state)")!
     let errorPass = (try? GoogleMusicSyncManager.validateOAuthCallback(url: errorCallbackURL, expectedState: state)) == nil
     assertTest(.unit, "OAuth callback validation rejects access_denied error parameter", errorPass)
@@ -341,7 +388,6 @@ func runAllVerifications() async {
     assertTest(.unit, "OAuth callback validation rejects unauthorized URL scheme", invalidSchemePass)
 
     // Credential connection and deletion
-    let googleSync = GoogleMusicSyncManager.shared
     try? await googleSync.connectWithToken(email: "user@example.com", accessToken: "ya29.sample_token")
     assertTest(.unit, "GoogleMusicSyncManager connects with email and token", googleSync.isConnected && googleSync.accountEmail == "user@example.com")
     await googleSync.disconnect()

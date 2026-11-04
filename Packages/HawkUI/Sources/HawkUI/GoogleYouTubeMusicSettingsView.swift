@@ -7,8 +7,11 @@ public struct GoogleYouTubeMusicSettingsView: View {
     @State private var syncManager = GoogleMusicSyncManager.shared
     @State private var showDisconnectAlert = false
     @State private var showManualTokenSheet = false
+    @State private var showClientIdSheet = false
+    @State private var showErrorAlert = false
     @State private var manualEmail = ""
     @State private var manualToken = ""
+    @State private var customClientIdInput = ""
     @State private var errorMessage: String?
     @State private var isSigningIn = false
 
@@ -63,7 +66,7 @@ public struct GoogleYouTubeMusicSettingsView: View {
                             Label("Disconnect Google Account", systemImage: "rectangle.portrait.and.arrow.right")
                         }
                     } else {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 14) {
                             Text("Bring your YouTube Music playlists and liked songs directly into HAWK.")
                                 .font(.subheadline)
                                 .foregroundColor(HawkTheme.textSecondary)
@@ -91,15 +94,87 @@ public struct GoogleYouTubeMusicSettingsView: View {
                             .buttonStyle(.plain)
                             .disabled(isSigningIn)
 
-                            Button {
-                                showManualTokenSheet = true
-                            } label: {
-                                Text("Advanced / Custom Token Connection")
+                            // Client ID Status & Configuration Card
+                            if syncManager.isUsingDefaultPlaceholder {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "info.circle.fill")
+                                            .foregroundColor(.orange)
+                                        Text("Google Cloud iOS Client ID")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(HawkTheme.textPrimary)
+                                    }
+                                    Text("To sign in on physical devices, configure your Google Cloud iOS Client ID registered for 'com.hawk.music'.")
+                                        .font(.caption)
+                                        .foregroundColor(HawkTheme.textSecondary)
+
+                                    Button {
+                                        customClientIdInput = syncManager.customClientId ?? ""
+                                        showClientIdSheet = true
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "slider.horizontal.3")
+                                            Text("Configure Client ID")
+                                        }
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(HawkTheme.primaryAccent)
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 12)
+                                        .background(HawkTheme.primaryAccent.opacity(0.15))
+                                        .cornerRadius(8)
+                                    }
+                                }
+                                .padding(12)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(12)
+                            } else {
+                                HStack {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Custom Client ID Active")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(HawkTheme.textPrimary)
+                                        Text(syncManager.effectiveClientId)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(HawkTheme.textTertiary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Button("Edit") {
+                                        customClientIdInput = syncManager.customClientId ?? ""
+                                        showClientIdSheet = true
+                                    }
                                     .font(.caption)
-                                    .foregroundColor(HawkTheme.textTertiary)
-                                    .underline()
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                                }
+                                .padding(10)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(10)
                             }
-                            .padding(.top, 4)
+
+                            HStack(spacing: 16) {
+                                Button {
+                                    showClientIdSheet = true
+                                } label: {
+                                    Text("OAuth Settings")
+                                        .font(.caption)
+                                        .foregroundColor(HawkTheme.textTertiary)
+                                        .underline()
+                                }
+
+                                Button {
+                                    showManualTokenSheet = true
+                                } label: {
+                                    Text("Manual Token Input")
+                                        .font(.caption)
+                                        .foregroundColor(HawkTheme.textTertiary)
+                                        .underline()
+                                }
+                            }
+                            .padding(.top, 2)
                         }
                         .padding(.vertical, 8)
                     }
@@ -176,8 +251,160 @@ public struct GoogleYouTubeMusicSettingsView: View {
         } message: {
             Text("Disconnecting will remove saved Google credentials from Keychain. Your already-synced local playlists will remain in your library.")
         }
+        .alert("Google Authentication", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) {}
+            if syncManager.isUsingDefaultPlaceholder {
+                Button("Configure Client ID") {
+                    customClientIdInput = syncManager.customClientId ?? ""
+                    showClientIdSheet = true
+                }
+            }
+        } message: {
+            Text(errorMessage ?? "An unexpected error occurred during Google sign-in.")
+        }
         .sheet(isPresented: $showManualTokenSheet) {
             manualTokenSheetContent
+        }
+        .sheet(isPresented: $showClientIdSheet) {
+            clientIdSheetContent
+        }
+    }
+
+    private var clientIdSheetContent: some View {
+        NavigationStack {
+            ZStack {
+                HawkTheme.darkBackground.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text("Google Cloud Client ID")
+                            .font(.headline)
+                            .foregroundColor(HawkTheme.textPrimary)
+
+                        Text("Configure your native iOS OAuth Client ID created in Google Cloud Console. HAWK uses RFC 8252 PKCE without requiring any client secrets.")
+                            .font(.caption)
+                            .foregroundColor(HawkTheme.textSecondary)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("iOS Client ID")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(HawkTheme.textSecondary)
+
+                            TextField("e.g. 123456-abc.apps.googleusercontent.com", text: $customClientIdInput)
+                                .padding()
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(10)
+                                .foregroundColor(HawkTheme.textPrimary)
+                                .autocorrectionDisabled()
+#if os(iOS)
+                                .textInputAutocapitalization(.never)
+#endif
+                        }
+
+                        // Derived Dynamic OAuth Configuration Preview
+                        let previewId = customClientIdInput.trimmingCharacters(in: .whitespaces).isEmpty ? syncManager.effectiveClientId : customClientIdInput.trimmingCharacters(in: .whitespaces)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Derived RFC 8252 OAuth Configuration:")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(HawkTheme.textPrimary)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Reversed Callback Scheme:")
+                                    .font(.caption2)
+                                    .foregroundColor(HawkTheme.textTertiary)
+                                Text(GoogleMusicSyncManager.reversedScheme(for: previewId))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(HawkTheme.primaryAccent)
+
+                                Text("Redirect URI:")
+                                    .font(.caption2)
+                                    .foregroundColor(HawkTheme.textTertiary)
+                                    .padding(.top, 2)
+                                Text(GoogleMusicSyncManager.redirectUri(for: previewId))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(HawkTheme.cardBackground.opacity(0.6))
+                            .cornerRadius(8)
+                        }
+
+                        // Step-by-Step Google Cloud Console Checklist
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Setup in Google Cloud Console:")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(HawkTheme.textPrimary)
+
+                            checklistRow(number: "1", text: "Go to console.cloud.google.com and select your project.")
+                            checklistRow(number: "2", text: "Enable 'YouTube Data API v3' in APIs & Services.")
+                            checklistRow(number: "3", text: "Configure OAuth Consent Screen (add your email to Test Users).")
+                            checklistRow(number: "4", text: "Go to Credentials → Create Credentials → OAuth Client ID.")
+                            checklistRow(number: "5", text: "Select Application Type: iOS.")
+                            checklistRow(number: "6", text: "Set Bundle ID: com.hawk.music")
+                            checklistRow(number: "7", text: "Copy the Client ID and paste it above.")
+                        }
+                        .padding(12)
+                        .background(HawkTheme.cardBackground)
+                        .cornerRadius(10)
+
+                        HStack(spacing: 12) {
+                            Button("Save Client ID") {
+                                syncManager.setCustomClientId(customClientIdInput)
+                                showClientIdSheet = false
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                            .background(HawkTheme.primaryAccent)
+                            .cornerRadius(12)
+
+                            if syncManager.customClientId != nil {
+                                Button("Reset Default") {
+                                    syncManager.setCustomClientId(nil)
+                                    customClientIdInput = ""
+                                    showClientIdSheet = false
+                                }
+                                .font(.subheadline)
+                                .foregroundColor(.red)
+                                .frame(height: 48)
+                                .padding(.horizontal, 16)
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(12)
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
+                    .padding(20)
+                }
+            }
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { showClientIdSheet = false }
+                        .foregroundColor(HawkTheme.textSecondary)
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    private func checklistRow(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(HawkTheme.primaryAccent.opacity(0.2))
+                    .frame(width: 20, height: 20)
+                Text(number)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(HawkTheme.primaryAccent)
+            }
+            Text(text)
+                .font(.caption)
+                .foregroundColor(HawkTheme.textSecondary)
         }
     }
 
@@ -251,6 +478,7 @@ public struct GoogleYouTubeMusicSettingsView: View {
                 try await syncManager.startGoogleSignIn()
             } catch {
                 errorMessage = error.localizedDescription
+                showErrorAlert = true
             }
             isSigningIn = false
         }

@@ -29,12 +29,113 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     private let httpClient = HawkHttpClient.shared
 
     // Google OAuth 2.0 configuration
-    private let defaultClientId = "874129582194-hawk-music-player.apps.googleusercontent.com"
-    private let redirectUri = "com.hawk.music:/oauth2callback"
+    public static let defaultClientId = "874129582194-hawk-music-player.apps.googleusercontent.com"
     private let scopes = [
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/youtube.readonly"
     ].joined(separator: " ")
+
+    /// Custom Google Cloud iOS Client ID configured by developer/user.
+    public var customClientId: String? {
+        get {
+            if let custom = UserDefaults.standard.string(forKey: "hawk_google_custom_client_id"),
+               !custom.trimmingCharacters(in: .whitespaces).isEmpty {
+                return custom.trimmingCharacters(in: .whitespaces)
+            }
+            return nil
+        }
+    }
+
+    /// Resolves active Google OAuth Client ID with multi-tier resolution:
+    /// 1. User/Developer custom Client ID stored in UserDefaults / Keychain.
+    /// 2. Bundle Info.plist (`GoogleClientID` key).
+    /// 3. Default fallback client ID.
+    public var effectiveClientId: String {
+        if let custom = customClientId {
+            return custom
+        }
+        if let bundleId = Bundle.main.object(forInfoDictionaryKey: "GoogleClientID") as? String,
+           !bundleId.trimmingCharacters(in: .whitespaces).isEmpty {
+            return bundleId.trimmingCharacters(in: .whitespaces)
+        }
+        return Self.defaultClientId
+    }
+
+    /// Indicates whether the active client ID is the unconfigured default placeholder.
+    public var isUsingDefaultPlaceholder: Bool {
+        effectiveClientId == Self.defaultClientId
+    }
+
+    /// Derives standard Google iOS reversed Client ID scheme (RFC 8252) from Client ID.
+    /// E.g. `123456-abc.apps.googleusercontent.com` -> `com.googleusercontent.apps.123456-abc`
+    public static func reversedScheme(for clientId: String) -> String {
+        let trimmed = clientId.trimmingCharacters(in: .whitespaces)
+        let suffix = ".apps.googleusercontent.com"
+        if trimmed.hasSuffix(suffix) {
+            let prefix = String(trimmed.dropLast(suffix.count))
+            return "com.googleusercontent.apps.\(prefix)"
+        }
+        return "com.hawk.music"
+    }
+
+    /// Derives standard Google iOS OAuth 2.0 redirect URI from Client ID.
+    public static func redirectUri(for clientId: String) -> String {
+        let scheme = reversedScheme(for: clientId)
+        return "\(scheme):/oauth2callback"
+    }
+
+    /// Current reversed URL scheme used for ASWebAuthenticationSession callback.
+    public var currentReversedScheme: String {
+        Self.reversedScheme(for: effectiveClientId)
+    }
+
+    /// Current redirect URI configured for authorization request and token exchange.
+    public var currentRedirectUri: String {
+        Self.redirectUri(for: effectiveClientId)
+    }
+
+    /// Updates or clears custom Google Cloud OAuth Client ID in secure storage.
+    public func setCustomClientId(_ id: String?) {
+        let cleaned = id?.trimmingCharacters(in: .whitespaces)
+        if let cleaned = cleaned, !cleaned.isEmpty {
+            UserDefaults.standard.set(cleaned, forKey: "hawk_google_custom_client_id")
+            Task {
+                try? await keychain.saveString(key: "google_client_id", value: cleaned)
+            }
+        } else {
+            UserDefaults.standard.removeObject(forKey: "hawk_google_custom_client_id")
+            Task {
+                try? await keychain.delete(key: "google_client_id")
+            }
+        }
+    }
+
+    /// Maps Google OAuth 2.0 error codes to user-friendly, actionable diagnostic guidance.
+    public static func mapOAuthError(code: String, description: String? = nil) -> String {
+        switch code.lowercased() {
+        case "invalid_client":
+            return "Google OAuth Client ID is invalid or not found in Google Cloud Console. Please configure an authorized iOS Client ID for bundle identifier 'com.hawk.music'."
+        case "deleted_client":
+            return "The configured Google OAuth client has been deleted from Google Cloud Console. Please configure an active iOS Client ID."
+        case "redirect_uri_mismatch":
+            return "Google OAuth redirect URI mismatch. In Google Cloud Console, ensure the iOS client has bundle ID 'com.hawk.music' and redirect URI matching your reversed client ID."
+        case "invalid_grant":
+            return "Authorization code or refresh token has expired or been revoked (invalid_grant). Please sign in again."
+        case "access_denied":
+            return "Google sign-in was cancelled or access was denied by the user."
+        case "invalid_scope":
+            return "Requested OAuth scope is invalid. Ensure YouTube Data API v3 and Google userinfo scopes are enabled in Google Cloud Console."
+        case "unauthorized_client":
+            return "This OAuth client is unauthorized for the authorization code grant type. Verify your Google Cloud client is configured as an 'iOS' application."
+        case "interaction_required":
+            return "Google user interaction is required to complete authentication. Please sign in again."
+        default:
+            if let desc = description, !desc.isEmpty {
+                return "Google authentication failed: \(desc) (\(code))"
+            }
+            return "Google authentication failed (\(code)). Please try again."
+        }
+    }
 
     public override init() {
         super.init()
@@ -76,18 +177,27 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     // MARK: - OAuth 2.0 Callback Validation (Public for Testing)
     /// Validates an incoming OAuth 2.0 callback URL against state, redirect scheme, and error conditions.
-    public static func validateOAuthCallback(url: URL, expectedState: String) throws -> String {
-        guard let scheme = url.scheme?.lowercased(), scheme == "com.hawk.music" else {
-            throw HawkError.authRequired("Invalid OAuth callback URL scheme: \(url.scheme ?? "none")")
+    public static func validateOAuthCallback(url: URL, expectedState: String, allowedScheme: String? = nil) throws -> String {
+        guard let scheme = url.scheme?.lowercased() else {
+            throw HawkError.authRequired("OAuth callback missing URL scheme")
+        }
+
+        let isGoogleScheme = scheme.starts(with: "com.googleusercontent.apps.")
+        let isHawkScheme = scheme == "com.hawk.music"
+        let matchesAllowed = (allowedScheme != nil && scheme == allowedScheme?.lowercased())
+
+        guard isGoogleScheme || isHawkScheme || matchesAllowed else {
+            throw HawkError.authRequired("Invalid OAuth callback URL scheme: \(scheme)")
         }
 
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let queryItems = components?.queryItems ?? []
 
-        // Check for error parameters (e.g. access_denied, interaction_required)
+        // Check for error parameters (e.g. invalid_client, access_denied, redirect_uri_mismatch)
         if let err = queryItems.first(where: { $0.name == "error" })?.value {
-            let desc = queryItems.first(where: { $0.name == "error_description" })?.value ?? err
-            throw HawkError.authRequired("Google authentication denied: \(desc)")
+            let desc = queryItems.first(where: { $0.name == "error_description" })?.value
+            let actionableMessage = mapOAuthError(code: err, description: desc)
+            throw HawkError.authRequired(actionableMessage)
         }
 
         // Validate state token to prevent CSRF
@@ -109,6 +219,10 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     // MARK: - Authentication
     public func startGoogleSignIn() async throws {
+        let activeClientId = effectiveClientId
+        let activeRedirectUri = currentRedirectUri
+        let activeReversedScheme = currentReversedScheme
+
         // Prepare PKCE code verifier and challenge (RFC 7636)
         let verifier = Self.generateCodeVerifier()
         let challenge = Self.generateCodeChallenge(from: verifier)
@@ -117,8 +231,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         components.queryItems = [
-            URLQueryItem(name: "client_id", value: defaultClientId),
-            URLQueryItem(name: "redirect_uri", value: redirectUri),
+            URLQueryItem(name: "client_id", value: activeClientId),
+            URLQueryItem(name: "redirect_uri", value: activeRedirectUri),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "scope", value: scopes),
             URLQueryItem(name: "code_challenge", value: challenge),
@@ -134,7 +248,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: "com.hawk.music"
+                callbackURLScheme: activeReversedScheme
             ) { [weak self] callbackURL, error in
                 guard let self = self else {
                     continuation.resume(throwing: HawkError.authRequired("Session deallocated"))
@@ -142,7 +256,13 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 }
 
                 if let error = error {
-                    continuation.resume(throwing: HawkError.authRequired(error.localizedDescription))
+                    let nsError = error as NSError
+                    if nsError.domain == ASWebAuthenticationSessionErrorDomain &&
+                        nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                        continuation.resume(throwing: HawkError.authRequired("Google sign-in was cancelled by the user."))
+                    } else {
+                        continuation.resume(throwing: HawkError.authRequired(error.localizedDescription))
+                    }
                     return
                 }
 
@@ -152,10 +272,19 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 }
 
                 do {
-                    let code = try Self.validateOAuthCallback(url: callbackURL, expectedState: stateToken)
+                    let code = try Self.validateOAuthCallback(
+                        url: callbackURL,
+                        expectedState: stateToken,
+                        allowedScheme: activeReversedScheme
+                    )
                     Task {
                         do {
-                            try await self.exchangeCodeForTokens(code: code, verifier: verifier)
+                            try await self.exchangeCodeForTokens(
+                                code: code,
+                                verifier: verifier,
+                                clientId: activeClientId,
+                                redirectUri: activeRedirectUri
+                            )
                             continuation.resume()
                         } catch {
                             continuation.resume(throwing: error)
@@ -237,8 +366,10 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
+        let activeClientId = effectiveClientId
+
         let bodyParams = [
-            "client_id": defaultClientId,
+            "client_id": activeClientId,
             "refresh_token": refreshToken,
             "grant_type": "refresh_token"
         ]
@@ -253,13 +384,15 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
         if httpResponse.statusCode == 400 || httpResponse.statusCode == 401 {
             let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let errStr = errorJson?["error"] as? String
+            let errStr = errorJson?["error"] as? String ?? "token_refresh_failed"
+            let errDesc = errorJson?["error_description"] as? String
             if errStr == "invalid_grant" {
                 // User revoked access from their Google account
                 await disconnect()
-                throw HawkError.authRequired("Google access has been revoked or expired. Please reconnect your account.")
+                throw HawkError.authRequired("Google access has been revoked or expired (invalid_grant). Please reconnect your account.")
             }
-            throw HawkError.authRequired("Token refresh failed. Please sign in again.")
+            let actionableMessage = Self.mapOAuthError(code: errStr, description: errDesc)
+            throw HawkError.authRequired("Token refresh failed: \(actionableMessage)")
         }
 
         guard (200...299).contains(httpResponse.statusCode),
@@ -276,7 +409,12 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         return newAccessToken
     }
 
-    private func exchangeCodeForTokens(code: String, verifier: String) async throws {
+    private func exchangeCodeForTokens(
+        code: String,
+        verifier: String,
+        clientId: String? = nil,
+        redirectUri: String? = nil
+    ) async throws {
         guard let tokenURL = URL(string: "https://oauth2.googleapis.com/token") else {
             throw HawkError.networkError("Invalid token URL")
         }
@@ -285,10 +423,13 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
+        let activeClientId = clientId ?? effectiveClientId
+        let activeRedirectUri = redirectUri ?? currentRedirectUri
+
         let bodyParams = [
             "code": code,
-            "client_id": defaultClientId,
-            "redirect_uri": redirectUri,
+            "client_id": activeClientId,
+            "redirect_uri": activeRedirectUri,
             "grant_type": "authorization_code",
             "code_verifier": verifier
         ]
@@ -303,12 +444,10 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
         if httpResponse.statusCode == 400 || httpResponse.statusCode == 401 {
             let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let errStr = errorJson?["error"] as? String ?? "unknown_error"
-            let errDesc = errorJson?["error_description"] as? String ?? errStr
-            if errStr == "invalid_grant" {
-                throw HawkError.authRequired("Authorization code expired or already redeemed (invalid_grant). Please sign in again.")
-            }
-            throw HawkError.authRequired("Token exchange failed: \(errDesc)")
+            let errStr = errorJson?["error"] as? String ?? "token_exchange_failed"
+            let errDesc = errorJson?["error_description"] as? String
+            let actionableMessage = Self.mapOAuthError(code: errStr, description: errDesc)
+            throw HawkError.authRequired("Token exchange failed: \(actionableMessage)")
         }
 
         guard (200...299).contains(httpResponse.statusCode),

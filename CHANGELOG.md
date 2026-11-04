@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.4.0] - 2026-11-04
 
+### Fixed (P0 Google OAuth 401 invalid_client & RFC 8252 Compliance)
+- **Root Cause Resolution for Google OAuth 401 `invalid_client`:**
+  - Resolved physical device blocker where Google returned HTTP 401 ("The OAuth client was not found") caused by placeholder client ID hardcoded in source.
+  - Multi-tier dynamic Client ID resolution: User/Developer custom Client ID stored in Keychain (`google_client_id`) and `UserDefaults` -> Bundle `Info.plist` (`GoogleClientID` key) -> default fallback.
+  - Dynamic RFC 8252 reversed Client ID scheme derivation: `com.googleusercontent.apps.[PREFIX]` derived from any valid Google Cloud iOS Client ID.
+  - Dynamic redirect URI generation matching Google's strict iOS requirement: `com.googleusercontent.apps.[PREFIX]:/oauth2callback`.
+  - Registered `CFBundleURLTypes` in `Configuration/Info.plist` and `project.yml` for `com.hawk.music` and Google reversed client ID schemes.
+  - Actionable error mapping for all 8 standard Google OAuth error codes (`invalid_client`, `deleted_client`, `redirect_uri_mismatch`, `invalid_grant`, `access_denied`, `invalid_scope`, `unauthorized_client`, and token refresh failure).
+  - Enhanced UI in `GoogleYouTubeMusicSettingsView` with on-device Client ID configuration sheet, real-time RFC 8252 parameter previews, setup checklist, and diagnostic alerts.
+
 ### Refined & Hardened (Master Product Refinement & Functional QA)
 - **Instant System Light/Dark Appearance Switching & Theme Architecture:**
   - Single central theme system (`HawkTheme`) utilizing dynamic semantic colors (`UIColor(dynamicProvider:)`) that immediately follow iOS appearance changes without app restart, reload, or flickering.
