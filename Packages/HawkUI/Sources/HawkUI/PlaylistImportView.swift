@@ -319,7 +319,17 @@ public struct PlaylistImportView: View {
                 do {
                     let data = try Data(contentsOf: url)
                     if let stringContent = String(data: data, encoding: .utf8), stringContent.contains("#EXTM3U") {
+                        if UniversalPlaylistImporter.isHLSManifest(content: stringContent) {
+                            self.errorMessage = "HLS stream manifests cannot be imported as audio playlists."
+                            self.isProcessing = false
+                            return
+                        }
                         let parsed = UniversalPlaylistImporter.parseM3U(content: stringContent)
+                        if parsed.tracks.isEmpty {
+                            self.errorMessage = "No valid audio tracks found in M3U file."
+                            self.isProcessing = false
+                            return
+                        }
                         progressMessage = "Matching \(parsed.tracks.count) tracks..."
                         let res = await UniversalPlaylistImporter.matchAndImport(tracks: parsed.tracks, playlistTitle: parsed.title)
                         self.editablePlaylistTitle = res.playlistTitle

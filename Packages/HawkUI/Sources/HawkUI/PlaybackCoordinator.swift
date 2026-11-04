@@ -41,6 +41,7 @@ public final class PlaybackCoordinator {
 
     private var pollTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
+    private var navigationRequestId: UInt64 = 0
 
     public init() {
         startPolling()
@@ -82,7 +83,15 @@ public final class PlaybackCoordinator {
                 try? await Task.sleep(nanoseconds: 50_000_000)
                 guard let self = self else { continue }
                 let state = await HawkAudioEngine.shared.playbackState
-                self.playbackState = state
+
+                // Consistent atomic state: only sync playbackState if state song matches currentSong or coordinator is idle
+                if let stateSong = state.currentSong {
+                    if stateSong.id == self.currentSong?.id {
+                        self.playbackState = state
+                    }
+                } else if self.currentSong == nil {
+                    self.playbackState = state
+                }
 
                 if let err = state.errorMessage {
                     self.errorMessage = err
@@ -109,6 +118,8 @@ public final class PlaybackCoordinator {
     public func play(song: Song, context: [Song]? = nil, isAutoAdvance: Bool = false) {
         // Cancel any pending playback or source-resolution task (latest-request-wins)
         playbackTask?.cancel()
+        navigationRequestId &+= 1
+        let thisReqId = navigationRequestId
 
         self.currentSong = song
         self.playbackState = .loading(song)
@@ -131,7 +142,7 @@ public final class PlaybackCoordinator {
                 }
             }
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, thisReqId == self.navigationRequestId else { return }
 
             self.queue = await QueueManager.shared.fullTimeline
             self.repeatMode = await QueueManager.shared.repeatMode
@@ -143,7 +154,7 @@ public final class PlaybackCoordinator {
             do {
                 try await HawkAudioEngine.shared.play(song: song, isAutoAdvance: isAutoAdvance)
             } catch {
-                if !Task.isCancelled {
+                if !Task.isCancelled && thisReqId == self.navigationRequestId {
                     self.errorMessage = error.localizedDescription
                     self.playbackState = .failed(song, .playbackFailed(error.localizedDescription))
                 }
@@ -173,27 +184,37 @@ public final class PlaybackCoordinator {
     }
 
     public func next(isAutoAdvance: Bool = false) {
-        Task {
+        navigationRequestId &+= 1
+        let thisReqId = navigationRequestId
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
             if let nextSong = await QueueManager.shared.next(isAutoAdvance: isAutoAdvance) {
-                play(song: nextSong, context: nil, isAutoAdvance: isAutoAdvance)
+                guard thisReqId == self.navigationRequestId else { return }
+                self.play(song: nextSong, context: nil, isAutoAdvance: isAutoAdvance)
             } else {
+                guard thisReqId == self.navigationRequestId else { return }
                 self.playbackState = .idle
             }
         }
     }
 
     public func previous() {
-        Task {
+        navigationRequestId &+= 1
+        let thisReqId = navigationRequestId
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
             // If more than 3 seconds into song, standard behavior is to restart current track
             if self.currentTime > 3.0 {
-                seek(to: 0.0)
+                self.seek(to: 0.0)
                 return
             }
 
             if let prevSong = await QueueManager.shared.previous() {
-                play(song: prevSong, context: nil)
+                guard thisReqId == self.navigationRequestId else { return }
+                self.play(song: prevSong, context: nil)
             } else {
-                seek(to: 0.0)
+                guard thisReqId == self.navigationRequestId else { return }
+                self.seek(to: 0.0)
             }
         }
     }

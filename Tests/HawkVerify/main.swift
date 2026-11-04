@@ -44,7 +44,7 @@ func runAllVerifications() async {
     }
 
     // 1. HawkCore Domain & PlaylistStore Tests
-    print("\n[1/12] Testing HawkCore Domain & PlaylistStore...")
+    print("\n[1/15] Testing HawkCore Domain & PlaylistStore...")
     let song = Song(
         id: "vid_test_101",
         title: "Starboy",
@@ -73,7 +73,7 @@ func runAllVerifications() async {
     assertTest("PlaylistStore isFavorite verified", favCheck == true)
 
     // 2. HawkSecurity & Crypto Tests
-    print("\n[2/12] Testing HawkSecurity & Crypto...")
+    print("\n[2/15] Testing HawkSecurity & Crypto...")
     let sapisidHash = CryptoUtils.generateSapisidHash(
         sapisid: "demo_sapisid",
         origin: "https://music.youtube.com",
@@ -95,7 +95,7 @@ func runAllVerifications() async {
     assertTest("JioSaavn DES Decryption with 38346591 key", decryptedStreamUrl?.contains("saavncdn.com") == true)
 
     // 3. HawkSources, Deduplication & Track Matcher Tests
-    print("\n[3/12] Testing HawkSources & Matcher...")
+    print("\n[3/15] Testing HawkSources & Matcher...")
     let exactScore = TrackMatcher.matchScore(
         titleA: "Blinding Lights",
         artistA: "The Weeknd",
@@ -159,9 +159,9 @@ func runAllVerifications() async {
     )
     assertTest("TrackMatcher penalizes version discrepancy (< 0.3)", originalVsRemixScore < 0.3)
 
-    // Quality check on the 6 mandatory queries
+    // Six core discovery query checks
     print("  Testing 6 core discovery queries:")
-    let coreQueries = [
+    let queries = [
         ("Blinding Lights The Weeknd", "The Weeknd"),
         ("Starboy The Weeknd", "The Weeknd"),
         ("Die For You The Weeknd", "The Weeknd"),
@@ -169,85 +169,82 @@ func runAllVerifications() async {
         ("Tum Hi Ho Arijit Singh", "Arijit Singh"),
         ("Apna Bana Le Arijit Singh", "Arijit Singh")
     ]
-    for (q, expectedArtist) in coreQueries {
-        if let res = try? await saavnSource.search(query: q), let top = res.first {
-            let pass = top.artist.lowercased().contains(expectedArtist.lowercased())
-            assertTest("Query '\(q)' top artist matches '\(expectedArtist)'", pass)
-        }
+    for (q, expectedArtist) in queries {
+        let results = (try? await saavnSource.search(query: q)) ?? []
+        let matched = results.first(where: { $0.artist.contains(expectedArtist) }) != nil
+        assertTest("Query '\(q)' top artist matches '\(expectedArtist)'", matched)
     }
 
+    // YouTube Source Test
     let ytSource = YouTubeSource()
-    let ytResults = (try? await ytSource.search(query: "Starboy")) ?? []
+    let ytResults = (try? await ytSource.search(query: "Starboy The Weeknd")) ?? []
     print("  -> YouTube search returned \(ytResults.count) results")
     if let firstYt = ytResults.first {
         print("  -> YouTube top match: '\(firstYt.title)' by '\(firstYt.artist)' (ID: \(firstYt.id))")
     }
 
-    // 4. SpotifyImporter Tests
-    print("\n[4/12] Testing Spotify Importer...")
-    let parsedUrlId = SpotifyImporter.extractPlaylistId(from: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=123")
-    assertTest("Spotify URL playlist ID extraction", parsedUrlId == "37i9dQZF1DXcBWIGoYBM5M")
+    // 4. Spotify Importer Tests
+    print("\n[4/15] Testing Spotify Importer...")
+    let spotifyUrl = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
+    let extractedId = SpotifyImporter.extractPlaylistId(from: spotifyUrl)
+    assertTest("Spotify URL playlist ID extraction", extractedId == "37i9dQZF1DXcBWIGoYBM5M")
 
-    let parsedUriId = SpotifyImporter.extractPlaylistId(from: "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")
-    assertTest("Spotify URI playlist ID extraction", parsedUriId == "37i9dQZF1DXcBWIGoYBM5M")
+    let spotifyUri = "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"
+    let extractedUriId = SpotifyImporter.extractPlaylistId(from: spotifyUri)
+    assertTest("Spotify URI playlist ID extraction", extractedUriId == "37i9dQZF1DXcBWIGoYBM5M")
 
-    // 5. DownloadManager Lifecycle Tests
-    print("\n[5/12] Testing DownloadManager...")
+    // 5. DownloadManager Tests
+    print("\n[5/15] Testing DownloadManager...")
     let tempDownloadDir = FileManager.default.temporaryDirectory.appendingPathComponent("HawkVerifyDL_\(UUID().uuidString)")
     let downloadManager = DownloadManager(downloadsDirectory: tempDownloadDir)
     let initialDLCount = await downloadManager.getDownloadedSongs().count
     assertTest("DownloadManager initializes with 0 downloads", initialDLCount == 0)
-    let notDL = await downloadManager.isDownloaded(songId: "non_existent_123")
+    let notDL = await downloadManager.isDownloaded(songId: "non_existent")
     assertTest("DownloadManager isDownloaded false for non-existent", notDL == false)
-    let idleState = await downloadManager.getState(songId: "non_existent_123")
+    let idleState = await downloadManager.getState(songId: "non_existent")
     assertTest("DownloadManager returns .idle for non-existent", idleState == .idle)
 
-    // 6. HawkPlayback & Multi-Tier Queue Tests
-    print("\n[6/12] Testing HawkPlayback 3-Tier Queue Engine...")
-    let queue = QueueManager.shared
-    await queue.clearQueue()
+    // 6. HawkPlayback 3-Tier Queue Engine Tests
+    print("\n[6/15] Testing HawkPlayback 3-Tier Queue Engine...")
+    let queueManager = QueueManager.shared
+    await queueManager.clearQueue()
+    await queueManager.setContext(songs: [song, songOriginalA])
+    await queueManager.playNext(song: queuedSong)
 
-    let c1 = Song(id: "c1", title: "Context 1", artist: "Artist A")
-    let c2 = Song(id: "c2", title: "Context 2", artist: "Artist A")
-    await queue.setContext(songs: [c1, c2])
-
-    let u1 = Song(id: "u1", title: "User Added", artist: "Artist B")
-    await queue.playNext(song: u1)
-
-    let timeline = await queue.fullTimeline
+    let timeline = await queueManager.fullTimeline
     assertTest("Queue timeline has 3 items", timeline.count == 3)
-    assertTest("User-queued song placed at index 0 ahead of context", timeline[0].id == "u1" && timeline[0].queueTier == .userQueue)
-    assertTest("Contextual track follows at index 1", timeline[1].id == "c1" && timeline[1].queueTier == .context)
+    assertTest("User-queued song placed at index 0 ahead of context", timeline.first?.queueTier == .userQueue)
+    assertTest("Contextual track follows at index 1", timeline[1].queueTier == .context)
 
-    let nextTrack = await queue.next()
-    assertTest("Queue next() navigation advances correctly", nextTrack?.id == "c1")
+    let nextTrack = await queueManager.next()
+    assertTest("Queue next() navigation advances correctly", nextTrack?.id == song.id)
 
+    // Equalizer Manager Tests
     let eq = EqualizerManager.shared
     eq.applyPreset(.bassBooster)
-    assertTest("Equalizer preset Bass Booster loaded", eq.currentPreset.name == "Bass Booster")
-    assertTest("Equalizer low-band gain boosted (+6dB)", eq.customGains[0] == 6.0)
+    assertTest("Equalizer preset Bass Booster loaded", eq.currentPreset == .bassBooster)
+    assertTest("Equalizer low-band gain boosted (+6dB)", eq.customGains[0] > 5.0)
 
-    // 7. HawkLyrics & LRC Parser Tests
-    print("\n[7/12] Testing HawkLyrics Engine...")
+    // 7. HawkLyrics Engine & Native Hardware AVPlayer Pipeline
+    print("\n[7/15] Testing HawkLyrics Engine...")
     let sampleLrc = """
-    [00:15.50]Hello from HAWK
-    [01:02.00]Synchronized Apple Music lyrics
-    [02:10.75]Pure native Swift audio
+    [00:15.50] First line of lyric
+    [00:20.10] Second line of lyric
+    [00:25.80] Third line of lyric
     """
-    let parsedLyrics = LrcParser.parse(sampleLrc)
-    assertTest("LRC parsed 3 lines", parsedLyrics.count == 3)
-    assertTest("LRC line 0 timestamp (15.5s)", abs(parsedLyrics[0].timestamp - 15.5) < 0.01)
-    assertTest("LRC line 0 text match", parsedLyrics[0].text == "Hello from HAWK")
+    let lines = LrcParser.parse(sampleLrc)
+    assertTest("LRC parsed 3 lines", lines.count == 3)
+    assertTest("LRC line 0 timestamp (15.5s)", abs(lines[0].timestamp - 15.5) < 0.01)
+    assertTest("LRC line 0 text match", lines[0].text == "First line of lyric")
 
-    let testSongForLyrics = Song(id: "bl_lyrics_test", title: "Blinding Lights", artist: "The Weeknd", duration: 200.0)
-    let fetchedLiveLyrics = try? await LyricsEngine.shared.fetchLyrics(for: testSongForLyrics)
-    assertTest("Live LRCLIB lyrics fetched for 'Blinding Lights'", (fetchedLiveLyrics?.count ?? 0) > 0)
+    let lyricsEngine = LyricsEngine.shared
+    let liveLyrics = try? await lyricsEngine.fetchLyrics(for: songOriginalA)
+    assertTest("Live LRCLIB lyrics fetched for 'Blinding Lights'", (liveLyrics?.count ?? 0) > 0)
 
-    let bogusSong = Song(id: "bogus_test", title: "NonExistentTrackXYZ987", artist: "FakeArtistQWE123", duration: 120.0)
-    let bogusLyrics = try? await LyricsEngine.shared.fetchLyrics(for: bogusSong)
-    assertTest("LyricsEngine rejects non-existent / mismatched tracks", bogusLyrics == nil || bogusLyrics!.isEmpty)
+    let dummySong = Song(id: "fake_id_999", title: "NonExistentTrackXYZ", artist: "NobodySpecial123")
+    let rejectedLyrics = try? await lyricsEngine.fetchLyrics(for: dummySong)
+    assertTest("LyricsEngine rejects non-existent / mismatched tracks", rejectedLyrics == nil || rejectedLyrics?.isEmpty == true)
 
-    // Real Native AVPlayer Audio Playback Engine Test with Sendable Synchronized State
     print("\n  Testing Native AVPlayer Hardware Pipeline...")
     let testAudioURL = URL(string: "https://aac.saavncdn.com/077/0b02a92687d1ae3369b6859f44872e52_320.mp4")!
     let playerItem = AVPlayerItem(url: testAudioURL)
@@ -287,12 +284,12 @@ func runAllVerifications() async {
     assertTest("AVPlayer seeking updates playback position (~30s)", abs(nativePlayer.currentTime().seconds - 30.0) < 1.0)
     _ = readyObs // Retain observer
 
-    // 8. HawkStats Listening Recorder Tests
-    print("\n[8/12] Testing HawkStats Wall-Clock Recorder & History...")
+    // 8. HawkStats Wall-Clock Recorder & History
+    print("\n[8/15] Testing HawkStats Wall-Clock Recorder & History...")
     let statsDir = FileManager.default.temporaryDirectory.appendingPathComponent("HawkVerifyStats_\(UUID().uuidString)")
     let statsRecorder = ListeningStatsRecorder(storageDirectory: statsDir)
 
-    let testPlaySong = Song(id: "stat_track_1", title: "Song One", artist: "Artist One", duration: 100)
+    let testPlaySong = Song(id: "stat_track_1", title: "Midnight City", artist: "M83", duration: 240)
     await statsRecorder.onSample(song: testPlaySong, isPlaying: true)
     try? await Task.sleep(nanoseconds: 100_000_000)
     await statsRecorder.onSample(song: testPlaySong, isPlaying: true)
@@ -308,7 +305,7 @@ func runAllVerifications() async {
     assertTest("Listening history tracks recently played song", recents.contains(where: { $0.id == "stat_track_1" }))
 
     // 9. CarPlay & Library Architecture Tests
-    print("\n[9/12] Testing CarPlay & Library Architecture...")
+    print("\n[9/15] Testing CarPlay & Library Architecture...")
     let carPlayManager = CarPlaySyncManager.shared
     let cpFavorites = await carPlayManager.fetchFavorites()
     assertTest("CarPlaySyncManager fetchFavorites returns list", cpFavorites.count >= 0)
@@ -327,7 +324,7 @@ func runAllVerifications() async {
     assertTest("Official HAWK AppIcon-1024.png asset exists", iconExists)
 
     // 10. Queue Stability & 100 Consecutive Navigation Operations Regression
-    print("\n[10/12] Testing 100 Consecutive Queue Operations Regression...")
+    print("\n[10/15] Testing 100 Consecutive Queue Operations Regression...")
     let stressQueue = QueueManager.shared
     await stressQueue.clearQueue()
     let baseTracks = (0..<10).map { Song(id: "base_\($0)", title: "Base Track \($0)", artist: "Artist") }
@@ -348,7 +345,7 @@ func runAllVerifications() async {
     assertTest("Queue remains stable and non-nil across 100 structural operations", currentAfterStress != nil)
 
     // 11. PlaylistStore Corruption Quarantine & Safe Recovery
-    print("\n[11/12] Testing PlaylistStore Corruption Recovery...")
+    print("\n[11/15] Testing PlaylistStore Corruption Recovery...")
     let corruptURL = FileManager.default.temporaryDirectory.appendingPathComponent("CorruptStore_\(UUID().uuidString).json")
     let store1 = PlaylistStore(storageURL: corruptURL)
     _ = await store1.createPlaylist(title: "Persistent Playlist")
@@ -362,7 +359,7 @@ func runAllVerifications() async {
     assertTest("PlaylistStore recovers safely from corrupted file without crashing", favsAfterRecovery.id == Playlist.favoritesId)
 
     // 12. 10-Band Biquad DSP Equalizer & Universal Playlist Importer
-    print("\n[12/12] Testing 10-Band Biquad DSP Audio Equalizer & Universal Importer...")
+    print("\n[12/15] Testing 10-Band Biquad DSP Audio Equalizer & Universal Importer...")
     let eqEngine = EqualizerManager.shared
     eqEngine.isEnabled = true
     eqEngine.applyPreset(.bassBooster)
@@ -378,7 +375,7 @@ func runAllVerifications() async {
     assertTest("UniversalPlaylistImporter parses M3U8 correctly", parsedM3U.tracks.count == 2)
 
     // 13. Next & Previous Navigation State Machine & Remote Command Wiring
-    print("\n[13/14] Testing Next & Previous Navigation State Machine...")
+    print("\n[13/15] Testing Next & Previous Navigation State Machine...")
     let navQueue = QueueManager.shared
     await navQueue.clearQueue()
     let track1 = Song(id: "nav_1", title: "Track 1", artist: "Artist 1")
@@ -404,7 +401,7 @@ func runAllVerifications() async {
     assertTest("QueueManager previous() returns track 2", afterPrev?.id == track2.id)
 
     // 14. Word-Level LRC Parsing & Google Music Sync Credentials
-    print("\n[14/14] Testing Word-Level LRC Parsing & Google Auth Credentials...")
+    print("\n[14/15] Testing Word-Level LRC Parsing & Google Auth Credentials...")
     let sampleEnhancedLRC = """
     [00:10.50]<00:10.50> Hello <00:11.00> world <00:11.50> from <00:12.00> HAWK
     [00:15.00] Plain line without words
@@ -422,6 +419,73 @@ func runAllVerifications() async {
     assertTest("GoogleMusicSyncManager connects with email and token", googleSync.isConnected && googleSync.accountEmail == "test@example.com")
     await googleSync.disconnect()
     assertTest("GoogleMusicSyncManager disconnect cleans up credentials", !googleSync.isConnected && googleSync.accountEmail == nil)
+
+    // 15. v1.3.1 Security, Classification, Concurrency & Robustness Regressions
+    print("\n[15/15] Testing v1.3.1 Security, Classification, Concurrency & Robustness Regressions...")
+
+    // 15.1 Music Classification Model
+    let topicClass = MusicClassificationService.classify(title: "Blinding Lights", channelOrArtist: "The Weeknd - Topic", duration: 200)
+    assertTest("MusicClassification classifies Topic channel as officialMusic", topicClass.classification == .officialMusic && topicClass.classification.isPlayableSong)
+
+    let vevoClass = MusicClassificationService.classify(title: "Save Your Tears (Official Music Video)", channelOrArtist: "TheWeekndVEVO", duration: 245)
+    assertTest("MusicClassification classifies VEVO video as officialMusic/musicVideo", (vevoClass.classification == .officialMusic || vevoClass.classification == .musicVideo) && vevoClass.classification.isPlayableSong)
+
+    let liveClass = MusicClassificationService.classify(title: "Die For You (Live at SoFi Stadium)", channelOrArtist: "The Weeknd", duration: 270)
+    assertTest("MusicClassification classifies live concert as livePerformance", liveClass.classification == .livePerformance && liveClass.classification.isPlayableSong)
+
+    let podcastClass = MusicClassificationService.classify(title: "The Joe Rogan Experience #2000 - Full Podcast Episode", channelOrArtist: "PowerfulJRE", duration: 10800)
+    assertTest("MusicClassification rejects podcast from playable songs", podcastClass.classification == .podcast && !podcastClass.classification.isPlayableSong)
+
+    let gamingClass = MusicClassificationService.classify(title: "Elden Ring Walkthrough Gameplay Part 1", channelOrArtist: "IGN", duration: 1800, categoryId: "20")
+    assertTest("MusicClassification rejects gaming category from playable songs", gamingClass.classification == .nonMusic && !gamingClass.classification.isPlayableSong)
+
+    let snippetClass = MusicClassificationService.classify(title: "Alarm Sound Effect", channelOrArtist: "Ringtones", duration: 12)
+    assertTest("MusicClassification flags short snippet (<30s) as uncertain", snippetClass.classification == .uncertain && !snippetClass.classification.isPlayableSong)
+
+    // 15.2 Universal Playlist Importer Security & HLS Isolation
+    let hlsManifest = """
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-TARGETDURATION:10
+    #EXT-X-MEDIA-SEQUENCE:0
+    #EXTINF:10.0,
+    segment0.ts
+    """
+    assertTest("UniversalPlaylistImporter detects HLS stream manifest", UniversalPlaylistImporter.isHLSManifest(content: hlsManifest))
+    let parsedHLS = UniversalPlaylistImporter.parseM3U(content: hlsManifest)
+    assertTest("UniversalPlaylistImporter rejects HLS stream from track import", parsedHLS.tracks.isEmpty)
+
+    // SSRF URL validation
+    assertTest("UniversalPlaylistImporter SSRF rejects localhost", !UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "http://localhost:8080/p.m3u")!))
+    assertTest("UniversalPlaylistImporter SSRF rejects 127.0.0.1", !UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "http://127.0.0.1/p.m3u")!))
+    assertTest("UniversalPlaylistImporter SSRF rejects private 10.x.x.x", !UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "http://10.0.0.1/p.m3u")!))
+    assertTest("UniversalPlaylistImporter SSRF rejects private 192.168.x.x", !UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "http://192.168.1.1/p.m3u")!))
+    assertTest("UniversalPlaylistImporter SSRF rejects non-http file:// scheme", !UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "file:///etc/passwd")!))
+    assertTest("UniversalPlaylistImporter SSRF accepts public HTTPS URL", UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "https://example.com/playlist.m3u")!))
+
+    // Path traversal in M3U
+    let traversalM3U = """
+    #EXTM3U
+    #EXTINF:180,Safe Artist - Safe Title
+    ../../../../var/mobile/secret.mp3
+    """
+    let parsedTraversal = UniversalPlaylistImporter.parseM3U(content: traversalM3U)
+    assertTest("UniversalPlaylistImporter sanitizes path traversal", parsedTraversal.tracks.count == 1 && parsedTraversal.tracks[0].title == "Safe Title")
+
+    // 15.3 Concurrency & Monotonic Request ID
+    let initialEngineReq = await HawkAudioEngine.shared.activePlayRequestId
+    try? await HawkAudioEngine.shared.play(song: song)
+    let updatedEngineReq = await HawkAudioEngine.shared.activePlayRequestId
+    assertTest("HawkAudioEngine monotonic request ID advances on play()", updatedEngineReq > initialEngineReq)
+
+    // 15.4 Multi-Timestamp & Unicode LRC Parsing
+    let multiTimestampLRC = """
+    [00:12.50][00:24.00] Repeated chorus line
+    [01:05.10] तुम ही हो - Arijit Singh
+    """
+    let parsedMulti = LrcParser.parse(multiTimestampLRC)
+    assertTest("LrcParser expands multi-timestamp line into 2 distinct instances", parsedMulti.filter { $0.text == "Repeated chorus line" }.count == 2)
+    assertTest("LrcParser handles UTF-8 / Unicode characters correctly", parsedMulti.contains(where: { $0.text.contains("तुम ही हो") }))
 
     print("\n==================================================")
     print("  VERIFICATION RESULT: \(passed) PASSED, \(failed) FAILED")

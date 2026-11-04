@@ -13,7 +13,7 @@
   <a href="https://apple.com"><img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B-blue.svg" alt="Platform iOS 17.0+" /></a>
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange.svg" alt="Swift 6.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-green.svg" alt="License GPLv3" /></a>
-  <a href="Tests/HawkVerify"><img src="https://img.shields.io/badge/Tests-75%20Passed-brightgreen.svg" alt="75 Tests Passing" /></a>
+  <a href="Tests/HawkVerify"><img src="https://img.shields.io/badge/Tests-93%20Passed-brightgreen.svg" alt="93 Tests Passing" /></a>
 </p>
 
 ---

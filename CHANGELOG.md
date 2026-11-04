@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.1] - 2026-11-04
+
+### Fixed & Hardened (Master Stability & Security Audit)
+- **Google OAuth 2.0 PKCE Security Hardening (P0):**
+  - Implemented cryptographic `state` token parameter generation (32 bytes via `SecRandomCopyBytes`, base64url-encoded) and strict callback validation in `ASWebAuthenticationSession` to mitigate CSRF and authorization-injection attacks (RFC 6749 §10.12).
+  - Added token lifecycle management with automatic refresh in `getValidAccessToken()` using `google_refresh_token` when `google_token_expiry` is within 60 seconds, preventing HTTP 401 sync failures.
+  - Hardened Keychain storage and ensured no credentials or access tokens are ever logged.
+- **Multi-Factor Music Classification Confidence Engine (P0):**
+  - Replaced shallow category-id checks with `MusicClassificationService` classifying content into: `.officialMusic`, `.musicVideo`, `.livePerformance`, `.podcast`, `.nonMusic`, `.uncertain`.
+  - Content filtering checks for YouTube Music `- Topic` and VEVO channels, live performance indicators, podcast and non-music keywords ("full episode", "gameplay", "walkthrough", "unboxing", "review"), and duration thresholds (>15 mins penalized, <30s flagged uncertain).
+  - Prevents non-music items and podcasts from polluting user playlists and playback queues.
+- **Universal Playlist Importer Security & HLS Stream Isolation (P1):**
+  - Added `isHLSManifest(content:)` distinguishing standard M3U/M3U8 playlists from HTTP Live Streaming video manifests (`#EXT-X-TARGETDURATION`, `#EXT-X-STREAM-INF`, `#EXT-X-MEDIA-SEQUENCE`), preventing `.ts` stream segments from being parsed as songs.
+  - Implemented `isSafeRemoteURL(_ url: URL)` protecting against SSRF attacks (rejects `localhost`, `127.0.0.1`, `[::1]`, private RFC 1918 subnets `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local `169.254.0.0/16`, and non-HTTP schemes).
+  - Enforced a 5 MB payload limit (`maxPayloadBytes = 5 * 1024 * 1024`) and 15-second network timeout to prevent resource exhaustion / DoS.
+  - Sanitized path traversal tokens (`../`) in M3U file imports.
+- **Playback Engine Atomic Transitions & Rapid Navigation Race Fix (P0):**
+  - Added monotonic `activePlayRequestId` on `HawkAudioEngine` and `navigationRequestId` on `PlaybackCoordinator`.
+  - Discards superseded asynchronous stream resolutions, KVO player-item status callbacks, and crossfade tasks during rapid skip operations (e.g. 10x consecutive Next/Prev).
+  - Guaranteed atomic state synchronization between `PlaybackCoordinator` and `HawkAudioEngine`.
+- **Live Synchronised Lyrics Engine Hardening (P0):**
+  - Added support for multiple timestamp tags per line (e.g. `[00:12.50][00:24.00]Chorus line`) with individual line expansion.
+  - Enhanced support for variable-precision timestamps (`[mm:ss]`, `[mm:ss.x]`, `[mm:ss.xxx]`), UTF-8 / Unicode characters, and stable index-based unique identifiers preventing SwiftUI scrolling jitter.
+- **Test Suite Accounting Reconciliation:**
+  - Resolved the 73 vs 75 discrepancy: documented 6 query loop iterations in Section 3 (12 base + 6 queries = 18 tests).
+  - Unified all sections into a deterministic `[1/15] ... [15/15]` structure.
+  - Added 18 new automated regression tests covering classification, HLS rejection, SSRF protection, path traversal, monotonic playback requests, and multi-timestamp LRC parsing.
+  - Total test count: **93 passed, 0 failed**.
+- **Release Packaging:**
+  - Version bumped to `1.3.1` (Build `4`).
+  - Generated and validated AltServer-compatible `HAWK.ipa` (2.0 MB).
+
 ## [1.3.0] - 2026-11-04
 
 ### Added & Fixed

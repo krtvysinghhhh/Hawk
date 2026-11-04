@@ -660,7 +660,7 @@ public struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.3.0 (Build 3)")
+                        Text("1.3.1 (Build 4)")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
 

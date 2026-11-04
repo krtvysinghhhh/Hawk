@@ -5,8 +5,8 @@ import HawkCore
 import HawkSecurity
 import HawkNetworking
 
-/// Manages Google OAuth 2.0 authentication, YouTube Music library synchronization,
-/// Keychain credential security, and incremental sync state.
+/// Manages Google OAuth 2.0 authentication with PKCE & state verification,
+/// YouTube Music library synchronization, Keychain credential security, and incremental sync state.
 @MainActor
 @Observable
 public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresentationContextProviding {
@@ -80,6 +80,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         // Prepare PKCE code verifier and challenge
         let verifier = generateCodeVerifier()
         let challenge = generateCodeChallenge(from: verifier)
+        // Cryptographic state parameter to prevent CSRF / session fixation
+        let stateToken = generateCodeVerifier()
 
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         components.queryItems = [
@@ -89,6 +91,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             URLQueryItem(name: "scope", value: scopes),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "state", value: stateToken),
             URLQueryItem(name: "prompt", value: "select_account")
         ]
 
@@ -111,10 +114,22 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                     return
                 }
 
-                guard let callbackURL = callbackURL,
-                      let code = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
-                        .queryItems?.first(where: { $0.name == "code" })?.value else {
-                    continuation.resume(throwing: HawkError.authRequired("Authorization code missing"))
+                guard let callbackURL = callbackURL else {
+                    continuation.resume(throwing: HawkError.authRequired("Callback URL missing"))
+                    return
+                }
+
+                let queryItems = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems
+
+                // Validate state parameter
+                let returnedState = queryItems?.first(where: { $0.name == "state" })?.value
+                guard returnedState == stateToken else {
+                    continuation.resume(throwing: HawkError.authRequired("OAuth state mismatch: potential CSRF detected"))
+                    return
+                }
+
+                guard let code = queryItems?.first(where: { $0.name == "code" })?.value else {
+                    continuation.resume(throwing: HawkError.authRequired("Authorization code missing in callback"))
                     return
                 }
 
@@ -135,12 +150,20 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     }
 
     /// Direct authentication with manual Google Token / Cookie for development & power users.
-    public func connectWithToken(email: String, accessToken: String, refreshToken: String? = nil) async throws {
+    public func connectWithToken(
+        email: String,
+        accessToken: String,
+        refreshToken: String? = nil,
+        expiresIn: TimeInterval = 3600
+    ) async throws {
         try await keychain.saveString(key: "google_account_email", value: email)
         try await keychain.saveString(key: "google_access_token", value: accessToken)
         if let refresh = refreshToken {
             try await keychain.saveString(key: "google_refresh_token", value: refresh)
         }
+        let expiryTimestamp = Date().addingTimeInterval(expiresIn).timeIntervalSince1970
+        try await keychain.saveString(key: "google_token_expiry", value: String(expiryTimestamp))
+
         self.accountEmail = email
         self.isConnected = true
         self.syncStatusMessage = "Connected as \(email)"
@@ -155,6 +178,61 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         self.accountEmail = nil
         self.isConnected = false
         self.syncStatusMessage = nil
+    }
+
+    /// Validates access token and transparently refreshes it via refresh_token if expired.
+    public func getValidAccessToken() async throws -> String {
+        guard let token = try? await keychain.readString(key: "google_access_token"), !token.isEmpty else {
+            throw HawkError.authRequired("Not connected to Google")
+        }
+
+        let expiryStr = (try? await keychain.readString(key: "google_token_expiry")) ?? "0"
+        let expiryTimestamp = Double(expiryStr) ?? 0
+        let now = Date().timeIntervalSince1970
+
+        // If token has at least 60 seconds of validity remaining, use it
+        if expiryTimestamp > (now + 60) {
+            return token
+        }
+
+        // Token is expired or expiring imminently -> refresh
+        guard let refreshToken = try? await keychain.readString(key: "google_refresh_token"), !refreshToken.isEmpty else {
+            if expiryTimestamp > now {
+                return token
+            }
+            throw HawkError.authRequired("Google session expired. Please sign in again.")
+        }
+
+        guard let tokenURL = URL(string: "https://oauth2.googleapis.com/token") else {
+            throw HawkError.networkError("Invalid token URL")
+        }
+
+        var request = URLRequest(url: tokenURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+        let bodyParams = [
+            "client_id": defaultClientId,
+            "refresh_token": refreshToken,
+            "grant_type": "refresh_token"
+        ]
+
+        let bodyString = bodyParams.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }.joined(separator: "&")
+        request.httpBody = bodyString.data(using: .utf8)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let newAccessToken = json["access_token"] as? String else {
+            throw HawkError.authRequired("Token refresh failed. Please sign in again.")
+        }
+
+        let expiresIn = json["expires_in"] as? Double ?? 3600
+        let newExpiry = Date().addingTimeInterval(expiresIn).timeIntervalSince1970
+        try await keychain.saveString(key: "google_access_token", value: newAccessToken)
+        try await keychain.saveString(key: "google_token_expiry", value: String(newExpiry))
+
+        return newAccessToken
     }
 
     private func exchangeCodeForTokens(code: String, verifier: String) async throws {
@@ -185,9 +263,10 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         }
 
         let refreshToken = json["refresh_token"] as? String
+        let expiresIn = json["expires_in"] as? Double ?? 3600
         let email = (try? await fetchGoogleUserEmail(accessToken: accessToken)) ?? "Google User"
 
-        try await connectWithToken(email: email, accessToken: accessToken, refreshToken: refreshToken)
+        try await connectWithToken(email: email, accessToken: accessToken, refreshToken: refreshToken, expiresIn: expiresIn)
 
         if isAutoSyncEnabled {
             await syncNow()
@@ -218,9 +297,12 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         isSyncing = true
         syncStatusMessage = "Syncing YouTube Music library..."
 
-        guard let token = try? await keychain.readString(key: "google_access_token") else {
+        let token: String
+        do {
+            token = try await getValidAccessToken()
+        } catch {
             isSyncing = false
-            syncStatusMessage = "Missing access credentials. Please sign in again."
+            syncStatusMessage = "Authentication error: \(error.localizedDescription)"
             return
         }
 
@@ -322,6 +404,17 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let channelTitle = snippet["videoOwnerChannelTitle"] as? String ?? snippet["channelTitle"] as? String ?? "Unknown Artist"
             let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
 
+            // Multi-factor confidence classification: reject podcasts and non-music videos
+            let classificationResult = MusicClassificationService.classify(
+                title: title,
+                channelOrArtist: channelTitle,
+                duration: 210
+            )
+
+            guard classificationResult.classification.isPlayableSong else {
+                continue
+            }
+
             var artworkURL: URL?
             if let thumbs = snippet["thumbnails"] as? [String: Any],
                let high = thumbs["high"] as? [String: Any],
@@ -365,6 +458,17 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
             let channelTitle = snippet["channelTitle"] as? String ?? "Unknown Artist"
             let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
+
+            let classificationResult = MusicClassificationService.classify(
+                title: title,
+                channelOrArtist: channelTitle,
+                duration: 210,
+                categoryId: "10"
+            )
+
+            guard classificationResult.classification.isPlayableSong else {
+                continue
+            }
 
             var artworkURL: URL?
             if let thumbs = snippet["thumbnails"] as? [String: Any],

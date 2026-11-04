@@ -16,6 +16,9 @@ public actor HawkAudioEngine {
     public private(set) var crossfadeDuration: TimeInterval = 4.0 // 0 to 12s
     public private(set) var playbackSpeed: Float = 1.0
 
+    // Monotonic request ID for race-condition prevention during rapid switching
+    public private(set) var activePlayRequestId: UInt64 = 0
+
     private var timeObserverToken: Any?
     private var endObserverToken: Any?
     private var stallObserverToken: Any?
@@ -61,6 +64,8 @@ public actor HawkAudioEngine {
 
     // MARK: - Playback Control
     public func play(song: Song, isAutoAdvance: Bool = false) async throws {
+        activePlayRequestId &+= 1
+        let thisRequestId = activePlayRequestId
         playbackState = .loading(song)
 
         do {
@@ -71,16 +76,24 @@ public actor HawkAudioEngine {
                 preloadedItem = nil
             } else {
                 let stream = try await SourceResolver.shared.resolve(song: song)
+                // If a newer play() superseded this one while resolving, abort early
+                guard thisRequestId == self.activePlayRequestId else {
+                    return
+                }
                 playerItem = AVPlayerItem(url: stream.url)
                 // Set preferred forward buffer to 5 seconds for rapid instant start
                 playerItem.preferredForwardBufferDuration = 5.0
             }
 
-            setupItemObservers(for: playerItem, song: song)
+            guard thisRequestId == self.activePlayRequestId else {
+                return
+            }
+
+            setupItemObservers(for: playerItem, song: song, requestId: thisRequestId)
 
             if isAutoAdvance && crossfadeDuration > 0 && activePlayer.currentItem != nil && activePlayer.rate > 0 {
                 // Natural track finish: smooth dual-player crossfade
-                await executeCrossfade(to: playerItem, song: song)
+                await executeCrossfade(to: playerItem, song: song, requestId: thisRequestId)
             } else {
                 // Manual track selection / skip: instant cut-in without 4s silent ramp
                 activePlayer.replaceCurrentItem(with: playerItem)
@@ -96,11 +109,15 @@ public actor HawkAudioEngine {
                 await self?.triggerPredictivePreload()
             }
         } catch let err as HawkError {
-            playbackState = .failed(song, err)
+            if thisRequestId == self.activePlayRequestId {
+                playbackState = .failed(song, err)
+            }
             throw err
         } catch {
             let hawkErr = HawkError.playbackFailed(error.localizedDescription)
-            playbackState = .failed(song, hawkErr)
+            if thisRequestId == self.activePlayRequestId {
+                playbackState = .failed(song, hawkErr)
+            }
             throw hawkErr
         }
     }
@@ -125,17 +142,20 @@ public actor HawkAudioEngine {
         self.preloadedItem = item
     }
 
-    private func setupItemObservers(for item: AVPlayerItem, song: Song) {
+    private func setupItemObservers(for item: AVPlayerItem, song: Song, requestId: UInt64) {
         itemStatusObserver?.invalidate()
         itemStatusObserver = item.observe(\.status, options: [.new, .initial]) { [weak self] observedItem, _ in
             Task { [weak self] in
                 guard let self else { return }
+                let currentReq = await self.activePlayRequestId
+                guard currentReq == requestId else { return }
+
                 switch observedItem.status {
                 case .readyToPlay:
-                    await self.handleItemReady(song: song, item: observedItem)
+                    await self.handleItemReady(song: song, item: observedItem, requestId: requestId)
                 case .failed:
                     let errMsg = observedItem.error?.localizedDescription ?? "Audio playback stream failed"
-                    await self.handleItemFailed(song: song, errorDescription: errMsg)
+                    await self.handleItemFailed(song: song, errorDescription: errMsg, requestId: requestId)
                 case .unknown:
                     break
                 @unknown default:
@@ -153,12 +173,16 @@ public actor HawkAudioEngine {
             queue: .main
         ) { [weak self] _ in
             Task { [weak self] in
-                await self?.handlePlaybackStalled(song: song)
+                let currentReq = await self?.activePlayRequestId
+                if currentReq == requestId {
+                    await self?.handlePlaybackStalled(song: song)
+                }
             }
         }
     }
 
-    private func handleItemReady(song: Song, item: AVPlayerItem) {
+    private func handleItemReady(song: Song, item: AVPlayerItem, requestId: UInt64) {
+        guard requestId == activePlayRequestId else { return }
         if activePlayer.rate > 0 {
             playbackState = .playing(song)
         } else {
@@ -167,7 +191,8 @@ public actor HawkAudioEngine {
         updateNowPlaying(song: song)
     }
 
-    private func handleItemFailed(song: Song, errorDescription: String) {
+    private func handleItemFailed(song: Song, errorDescription: String, requestId: UInt64) {
+        guard requestId == activePlayRequestId else { return }
         playbackState = .failed(song, .playbackFailed(errorDescription))
     }
 
@@ -185,14 +210,18 @@ public actor HawkAudioEngine {
             forName: .AVPlayerItemDidPlayToEndTime,
             object: item,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notif in
+            let endedItem = notif.object as? AVPlayerItem
             Task { [weak self] in
-                await self?.handleTrackEnded()
+                await self?.handleTrackEnded(forItem: endedItem)
             }
         }
     }
 
-    public func handleTrackEnded() async {
+    public func handleTrackEnded(forItem item: AVPlayerItem? = nil) async {
+        if let item = item, activePlayer.currentItem !== item {
+            return
+        }
         if let song = playbackState.currentSong {
             playbackState = .ended(song)
         }
@@ -268,8 +297,9 @@ public actor HawkAudioEngine {
     }
 
     // MARK: - Dual Player Crossfade
-    private func executeCrossfade(to nextItem: AVPlayerItem, song: Song) async {
+    private func executeCrossfade(to nextItem: AVPlayerItem, song: Song, requestId: UInt64) async {
         crossfadeTask?.cancel()
+        guard requestId == activePlayRequestId else { return }
 
         let outgoing = activePlayer
         let incoming = standbyPlayer

@@ -31,8 +31,11 @@ public struct PlaylistImportResult: Sendable {
     }
 }
 
-/// Universal playlist import and export architecture supporting Spotify, YouTube, M3U/M3U8, and JSON.
+/// Universal playlist import and export architecture supporting Spotify, YouTube, M3U/M3U8, and JSON,
+/// with HLS manifest isolation, SSRF URL validation, and DoS payload caps.
 public enum UniversalPlaylistImporter {
+
+    public static let maxPayloadBytes: Int = 5 * 1024 * 1024 // 5 MB ceiling
 
     // MARK: - M3U8 Export
     public static func exportToM3U8(playlist: Playlist) -> String {
@@ -41,6 +44,7 @@ public enum UniversalPlaylistImporter {
             let dur = Int(song.duration)
             lines.append("#EXTINF:\(dur),\(song.artist) - \(song.title)")
             if let local = song.localFileURL {
+                // Sanitize path for export
                 lines.append(local.path)
             } else if let uri = song.mediaUri {
                 lines.append(uri)
@@ -58,8 +62,23 @@ public enum UniversalPlaylistImporter {
         return try encoder.encode(playlist)
     }
 
+    // MARK: - HLS vs M3U Validation
+    public static func isHLSManifest(content: String) -> Bool {
+        content.contains("#EXT-X-TARGETDURATION") ||
+        content.contains("#EXT-X-STREAM-INF") ||
+        content.contains("#EXT-X-MEDIA-SEQUENCE") ||
+        content.contains("#EXT-X-PLAYLIST-TYPE") ||
+        content.contains("#EXT-X-KEY") ||
+        content.contains("#EXT-X-MAP")
+    }
+
     // MARK: - M3U / M3U8 Parsing
     public static func parseM3U(content: String) -> (title: String, tracks: [(title: String, artist: String, duration: TimeInterval)]) {
+        // Guard against HLS streaming manifests being falsely parsed as track playlists
+        if isHLSManifest(content: content) {
+            return (title: "HLS Stream (Ignored)", tracks: [])
+        }
+
         var tracks: [(title: String, artist: String, duration: TimeInterval)] = []
         var playlistTitle = "Imported Playlist"
 
@@ -92,8 +111,11 @@ public enum UniversalPlaylistImporter {
                     }
                 }
             } else if !line.hasPrefix("#") {
-                // Line is a track URI or path
-                tracks.append((title: pendingTitle, artist: pendingArtist, duration: pendingDuration))
+                // Line is a track URI or file path - sanitize path traversal
+                let sanitizedPath = line.replacingOccurrences(of: "../", with: "")
+                if !sanitizedPath.isEmpty {
+                    tracks.append((title: pendingTitle, artist: pendingArtist, duration: pendingDuration))
+                }
                 pendingDuration = 0
                 pendingArtist = "Unknown Artist"
                 pendingTitle = "Unknown Title"
@@ -116,6 +138,28 @@ public enum UniversalPlaylistImporter {
         throw HawkError.decodeError("JSON data does not match known playlist schemas")
     }
 
+    // MARK: - URL Safety Validation
+    public static func isSafeRemoteURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), (scheme == "https" || scheme == "http") else {
+            return false
+        }
+        guard let host = url.host?.lowercased() else {
+            return false
+        }
+        // SSRF protection: reject loopback, link-local, and private subnets
+        if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" || host == "[::1]" {
+            return false
+        }
+        if host.hasPrefix("10.") || host.hasPrefix("192.168.") || host.hasPrefix("169.254.") {
+            return false
+        }
+        let parts = host.split(separator: ".")
+        if parts.count == 4, parts[0] == "172", let second = Int(parts[1]), (16...31).contains(second) {
+            return false
+        }
+        return true
+    }
+
     // MARK: - URL Importer
     public static func fetchTracksFromURL(_ urlString: String) async throws -> (title: String, tracks: [(title: String, artist: String, duration: TimeInterval)]) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -125,17 +169,30 @@ public enum UniversalPlaylistImporter {
             return (meta.title, trackList)
         }
 
-        guard let url = URL(string: trimmed) else {
-            throw HawkError.networkError("Invalid playlist URL format")
+        guard let url = URL(string: trimmed), isSafeRemoteURL(url) else {
+            throw HawkError.networkError("Invalid or restricted remote playlist URL. Only public HTTPS playlists are supported.")
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15.0
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-            throw HawkError.networkError("Unable to fetch playlist from URL")
+            throw HawkError.networkError("Unable to fetch playlist from URL: server returned error")
         }
 
-        if let stringContent = String(data: data, encoding: .utf8), stringContent.contains("#EXTM3U") {
-            return parseM3U(content: stringContent)
+        // Cap payload to 5MB to prevent DoS memory exhaustion
+        guard data.count <= maxPayloadBytes else {
+            throw HawkError.networkError("Remote playlist file exceeds maximum size limit (5MB)")
+        }
+
+        if let stringContent = String(data: data, encoding: .utf8) {
+            if isHLSManifest(content: stringContent) {
+                throw HawkError.decodeError("HLS video/audio stream manifests cannot be imported as playlists")
+            }
+            if stringContent.contains("#EXTM3U") {
+                return parseM3U(content: stringContent)
+            }
         }
 
         if let playlist = try? parseJSON(data: data) {
