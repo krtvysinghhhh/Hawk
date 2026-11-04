@@ -45,6 +45,24 @@ public final class PlaybackCoordinator {
     public init() {
         startPolling()
         setupTrackFinishedCallback()
+        setupRemoteHandlers()
+    }
+
+    private func setupRemoteHandlers() {
+        Task { [weak self] in
+            await HawkAudioEngine.shared.setRemoteCommandHandlers(
+                onNext: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.next()
+                    }
+                },
+                onPrevious: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.previous()
+                    }
+                }
+            )
+        }
     }
 
     private func setupTrackFinishedCallback() {
@@ -106,7 +124,9 @@ public final class PlaybackCoordinator {
                 await QueueManager.shared.setContext(songs: context, startAt: startIndex)
             } else {
                 let currentQueue = await QueueManager.shared.fullTimeline
-                if currentQueue.isEmpty {
+                if let idx = currentQueue.firstIndex(where: { $0.id == song.id }) {
+                    _ = await QueueManager.shared.jumpTo(index: idx)
+                } else {
                     await QueueManager.shared.setContext(songs: [song], startAt: 0)
                 }
             }
@@ -154,7 +174,7 @@ public final class PlaybackCoordinator {
 
     public func next(isAutoAdvance: Bool = false) {
         Task {
-            if let nextSong = await QueueManager.shared.next() {
+            if let nextSong = await QueueManager.shared.next(isAutoAdvance: isAutoAdvance) {
                 play(song: nextSong, context: nil, isAutoAdvance: isAutoAdvance)
             } else {
                 self.playbackState = .idle
@@ -172,6 +192,8 @@ public final class PlaybackCoordinator {
 
             if let prevSong = await QueueManager.shared.previous() {
                 play(song: prevSong, context: nil)
+            } else {
+                seek(to: 0.0)
             }
         }
     }

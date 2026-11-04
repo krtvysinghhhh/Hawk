@@ -6,7 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.1.0] - 2026-11-02
+## [1.3.0] - 2026-11-04
+
+### Added & Fixed
+- **Playback Engine Reliability & Queue Synchronization (P0):**
+  - Resolved malfunctioning Previous Track and Next Track controls across the entire system.
+  - Linked `MPRemoteCommandCenter` (Lock Screen, Apple Control Center, AirPods/Bluetooth, CarPlay) directly to `PlaybackCoordinator` via delegated closures.
+  - Standardized Previous Track behavior: seeks to 0.0s when `currentTime > 3.0s`; goes to previous track in queue when `currentTime <= 3.0s`.
+  - Fixed context loss across Home carousels, top hits, search results, and playlists by always passing and updating active playback contexts.
+- **Official Brand Identity & Restrained Palette:**
+  - Standardized official colour system: Near-black `#0B0B0D`, Secondary `#151518`, Soft ivory `#F2F0EB`, Secondary text `#96969D`, Dividers `#29292F`, Accent Muted violet `#7867A8`, Light Warm white `#F7F7F5`.
+  - Authoritative minimalist geometric hawk head monogram applied to all asset catalogs, About panels, and app icon.
+- **Automatic Day/Night System Appearance:**
+  - Added user appearance mode settings: System (default), Light, and Dark with dynamic `@AppStorage` persistence and non-restarting UI adaptation.
+- **Live Synchronised Lyrics Engine (P0):**
+  - Prominent active line centering with auto-scroll and 120ms perceptual lead time.
+  - Enhanced word-level highlighting for word-synced LRC lines.
+  - Automatic resume timer: scrolls manually suspend auto-follow and smoothly re-center 4.5 seconds after user ceases interaction.
+  - Full support for `accessibilityReduceMotion`.
+- **Playlist Portability System (P1):**
+  - Dedicated interactive `PlaylistImportView` supporting M3U, M3U8, JSON files, and Spotify / web playlist links.
+  - Three-tier match preview showing Matched, Ambiguous (for user correction), and Missing tracks.
+  - One-tap M3U8 export in `PlaylistDetailView` using native iOS `ShareLink`.
+- **Google Login & YouTube Music Library Sync (P0/P1):**
+  - Implemented `GoogleMusicSyncManager` with `ASWebAuthenticationSession` PKCE OAuth 2.0 flow.
+  - Keychain token persistence with secure cleanup on disconnect.
+  - Strict music-only scope importing liked tracks and user-created music playlists while excluding watch history, comments, and channels.
+- **Automated Verification:**
+  - Expanded test suite to **75 passing tests (0 failed)**.
+
+## [1.2.1] - 2026-11-03
 
 ### Added
 - **Apple CarPlay Audio Integration:**

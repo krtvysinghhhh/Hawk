@@ -208,7 +208,7 @@ struct HomeView: View {
                                                 Task {
                                                     let results = (try? await JioSaavnSource().search(query: artist.query)) ?? []
                                                     if let first = results.first {
-                                                        coordinator.play(song: first)
+                                                        coordinator.play(song: first, context: results)
                                                     }
                                                 }
                                             } label: {
@@ -272,7 +272,7 @@ struct HomeView: View {
                                     LazyVStack(spacing: 6) {
                                         ForEach(topHits.prefix(10)) { song in
                                             Button {
-                                                coordinator.play(song: song)
+                                                coordinator.play(song: song, context: topHits)
                                             } label: {
                                                 SongRowView(song: song)
                                                     .padding(.horizontal, 20)
@@ -321,7 +321,7 @@ struct HomeView: View {
                 HStack(spacing: 16) {
                     ForEach(songs) { song in
                         Button {
-                            coordinator.play(song: song)
+                            coordinator.play(song: song, context: songs)
                         } label: {
                             SongCardView(song: song)
                         }
@@ -525,7 +525,7 @@ struct GenreDetailView: View {
             } else {
                 List(songs) { song in
                     Button {
-                        coordinator.play(song: song)
+                        coordinator.play(song: song, context: songs)
                     } label: {
                         SongRowView(song: song)
                     }
@@ -609,7 +609,7 @@ struct SearchView: View {
                     } else {
                         List(results) { song in
                             Button {
-                                coordinator.play(song: song)
+                                coordinator.play(song: song, context: results)
                             } label: {
                                 SongRowView(song: song)
                             }
@@ -623,7 +623,7 @@ struct SearchView: View {
                                     Label("Add to Favorites", systemImage: "heart")
                                 }
                                 Button {
-                                    coordinator.play(song: song)
+                                    coordinator.play(song: song, context: results)
                                 } label: {
                                     Label("Play Immediately", systemImage: "play")
                                 }
@@ -762,15 +762,15 @@ struct LibraryView: View {
     private var coordinator = PlaybackCoordinator.shared
 
     private let librarySections: [(title: String, icon: String, color: Color, destination: AnyView)] = [
-        ("Playlists", "music.note.list", Color(red: 1.0, green: 0.22, blue: 0.37), AnyView(PlaylistsView())),
-        ("Artists", "music.mic", Color(red: 0.35, green: 0.34, blue: 0.84), AnyView(ArtistsView())),
-        ("Albums", "square.stack", Color(red: 0.69, green: 0.32, blue: 0.87), AnyView(AlbumsView())),
-        ("Songs", "music.note", Color(red: 0.0, green: 0.48, blue: 1.0), AnyView(AllSongsView())),
-        ("Favourites", "heart.fill", Color(red: 1.0, green: 0.18, blue: 0.33), AnyView(FavoritesView())),
-        ("Recently Added", "clock.fill", Color(red: 1.0, green: 0.58, blue: 0.0), AnyView(RecentlyAddedView())),
-        ("Recently Played", "play.circle.fill", Color(red: 0.98, green: 0.40, blue: 0.20), AnyView(RecentlyPlayedView())),
-        ("Downloaded", "arrow.down.circle.fill", Color(red: 0.20, green: 0.78, blue: 0.35), AnyView(DownloadsView())),
-        ("Local Files", "folder.fill", Color(red: 1.0, green: 0.80, blue: 0.0), AnyView(LocalFilesView()))
+        ("Liked Songs", "heart.fill", HawkTheme.primaryAccent, AnyView(FavoritesView())),
+        ("Playlists", "music.note.list", HawkTheme.primaryAccent, AnyView(PlaylistsView())),
+        ("Albums", "square.stack", HawkTheme.secondaryAccent, AnyView(AlbumsView())),
+        ("Artists", "music.mic", HawkTheme.secondaryAccent, AnyView(ArtistsView())),
+        ("Recently Added", "clock.fill", HawkTheme.secondaryAccent, AnyView(RecentlyAddedView())),
+        ("Recently Played", "play.circle.fill", HawkTheme.primaryAccent, AnyView(RecentlyPlayedView())),
+        ("All Songs", "music.note", HawkTheme.secondaryAccent, AnyView(AllSongsView())),
+        ("Downloaded", "arrow.down.circle.fill", HawkTheme.primaryAccent, AnyView(DownloadsView())),
+        ("Local Files", "folder.fill", HawkTheme.secondaryAccent, AnyView(LocalFilesView()))
     ]
 
     var body: some View {
@@ -779,7 +779,7 @@ struct LibraryView: View {
                 HawkTheme.darkBackground.ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 20) {
                         // Section: Navigation List
                         VStack(spacing: 1) {
                             ForEach(librarySections, id: \.title) { sec in
@@ -801,7 +801,7 @@ struct LibraryView: View {
                                             .foregroundColor(HawkTheme.textTertiary)
                                     }
                                     .padding(.horizontal, 20)
-                                    .padding(.vertical, 13)
+                                    .padding(.vertical, 12)
                                 }
                                 .buttonStyle(.plain)
 
@@ -815,7 +815,7 @@ struct LibraryView: View {
                         .background(HawkTheme.cardBackground)
                         .cornerRadius(16)
                         .padding(.horizontal, 16)
-                        .padding(.top, 8)
+                        .padding(.top, 4)
 
                         // Section: Recently Added 1:1 Artwork Carousel
                         if !recentLibrarySongs.isEmpty {

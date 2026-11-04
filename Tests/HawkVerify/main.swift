@@ -377,6 +377,52 @@ func runAllVerifications() async {
     let parsedM3U = UniversalPlaylistImporter.parseM3U(content: exportedM3U)
     assertTest("UniversalPlaylistImporter parses M3U8 correctly", parsedM3U.tracks.count == 2)
 
+    // 13. Next & Previous Navigation State Machine & Remote Command Wiring
+    print("\n[13/14] Testing Next & Previous Navigation State Machine...")
+    let navQueue = QueueManager.shared
+    await navQueue.clearQueue()
+    let track1 = Song(id: "nav_1", title: "Track 1", artist: "Artist 1")
+    let track2 = Song(id: "nav_2", title: "Track 2", artist: "Artist 2")
+    let track3 = Song(id: "nav_3", title: "Track 3", artist: "Artist 3")
+    await navQueue.setContext(songs: [track1, track2, track3], startAt: 0)
+
+    // Verify next advances to track 2
+    let afterNext = await navQueue.next()
+    assertTest("QueueManager next() advances to track 2", afterNext?.id == track2.id)
+
+    // Verify repeatMode .one autoAdvance repeats current track
+    await navQueue.setRepeatMode(.one)
+    let autoAdvancedRepeatOne = await navQueue.next(isAutoAdvance: true)
+    assertTest("QueueManager auto-advance repeats current track in .one mode", autoAdvancedRepeatOne?.id == track2.id)
+
+    // Verify repeatMode .one manual skip still advances to track 3
+    let manualSkipRepeatOne = await navQueue.next(isAutoAdvance: false)
+    assertTest("QueueManager manual skip advances to track 3 in .one mode", manualSkipRepeatOne?.id == track3.id)
+
+    // Verify previous returns track 2
+    let afterPrev = await navQueue.previous()
+    assertTest("QueueManager previous() returns track 2", afterPrev?.id == track2.id)
+
+    // 14. Word-Level LRC Parsing & Google Music Sync Credentials
+    print("\n[14/14] Testing Word-Level LRC Parsing & Google Auth Credentials...")
+    let sampleEnhancedLRC = """
+    [00:10.50]<00:10.50> Hello <00:11.00> world <00:11.50> from <00:12.00> HAWK
+    [00:15.00] Plain line without words
+    """
+    let parsedLines = LrcParser.parse(sampleEnhancedLRC)
+    assertTest("LrcParser parsed 2 lines", parsedLines.count == 2)
+    assertTest("Line 0 isWordSynced is true", parsedLines.first?.isWordSynced == true)
+    assertTest("Line 0 has 4 words", parsedLines.first?.words.count == 4)
+    assertTest("Line 0 clean text is correct", parsedLines.first?.text == "Hello world from HAWK")
+    assertTest("Line 1 isWordSynced is false", parsedLines.last?.isWordSynced == false)
+
+    // Test GoogleMusicSyncManager credentials & clean disconnect
+    let googleSync = GoogleMusicSyncManager.shared
+    try? await googleSync.connectWithToken(email: "test@example.com", accessToken: "ya29.mock_token")
+    assertTest("GoogleMusicSyncManager connects with email and token", googleSync.isConnected && googleSync.accountEmail == "test@example.com")
+    await googleSync.disconnect()
+    assertTest("GoogleMusicSyncManager disconnect cleans up credentials", !googleSync.isConnected && googleSync.accountEmail == nil)
+
     print("\n==================================================")
     print("  VERIFICATION RESULT: \(passed) PASSED, \(failed) FAILED")
     print("==================================================")

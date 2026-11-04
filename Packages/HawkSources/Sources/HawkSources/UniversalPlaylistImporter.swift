@@ -1,7 +1,8 @@
 import Foundation
 import HawkCore
 
-public struct ImportedTrackItem: Sendable {
+public struct ImportedTrackItem: Sendable, Identifiable {
+    public var id: String { "\(title)_\(artist)_\(duration)" }
     public let title: String
     public let artist: String
     public let duration: TimeInterval
@@ -113,6 +114,36 @@ public enum UniversalPlaylistImporter {
             return Playlist(title: "Imported JSON Playlist", songs: songs)
         }
         throw HawkError.decodeError("JSON data does not match known playlist schemas")
+    }
+
+    // MARK: - URL Importer
+    public static func fetchTracksFromURL(_ urlString: String) async throws -> (title: String, tracks: [(title: String, artist: String, duration: TimeInterval)]) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let spotifyId = SpotifyImporter.extractPlaylistId(from: trimmed) {
+            let meta = try await SpotifyImporter.fetchPlaylist(playlistId: spotifyId)
+            let trackList = meta.tracks.map { ($0.title, $0.artist, $0.duration) }
+            return (meta.title, trackList)
+        }
+
+        guard let url = URL(string: trimmed) else {
+            throw HawkError.networkError("Invalid playlist URL format")
+        }
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw HawkError.networkError("Unable to fetch playlist from URL")
+        }
+
+        if let stringContent = String(data: data, encoding: .utf8), stringContent.contains("#EXTM3U") {
+            return parseM3U(content: stringContent)
+        }
+
+        if let playlist = try? parseJSON(data: data) {
+            let trackList = playlist.songs.map { ($0.title, $0.artist, $0.duration) }
+            return (playlist.title, trackList)
+        }
+
+        throw HawkError.decodeError("Unsupported playlist format at URL")
     }
 
     // MARK: - Universal Resolver

@@ -107,8 +107,8 @@ public actor PlaylistStore {
     }
 
     // MARK: - Write Operations
-    public func createPlaylist(title: String) -> Playlist {
-        let newPlaylist = Playlist(title: title)
+    public func createPlaylist(title: String, initialSongs: [Song] = []) -> Playlist {
+        let newPlaylist = Playlist(title: title, songs: initialSongs)
         playlists[newPlaylist.id] = newPlaylist
         save()
         return newPlaylist

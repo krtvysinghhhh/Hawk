@@ -347,25 +347,35 @@ struct AirPlayButton: View {
 }
 #endif
 
-/// Embedded synchronized lyrics panel with tap-to-seek, auto-scroll, and re-center controls.
+/// Embedded synchronized lyrics panel with tap-to-seek, auto-scroll, word-level highlight, and re-center controls.
 struct LyricsContainerView: View {
     let song: Song
     let currentTime: TimeInterval
     let isPlaying: Bool
     let onSeek: (TimeInterval) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var lyrics: [LyricLine] = []
     @State private var isLoading = true
     @State private var isUserScrolling = false
+    @State private var userScrollResetTask: Task<Void, Never>?
 
     private var isSynchronized: Bool {
         lyrics.contains(where: { $0.timestamp > 0.05 })
     }
 
-    private var currentActiveLineId: String? {
+    private var currentActiveLine: LyricLine? {
         guard isSynchronized else { return nil }
-        // 120ms lead time gives natural perceptual vocal synchronization
-        return lyrics.last(where: { (currentTime + 0.12) >= $0.timestamp })?.id
+        // 120ms perceptual lead time for natural vocal synchronisation
+        return lyrics.last(where: { (currentTime + 0.12) >= $0.timestamp })
+    }
+
+    private var currentActiveLineId: String? {
+        currentActiveLine?.id
+    }
+
+    private var animation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.80)
     }
 
     var body: some View {
@@ -397,26 +407,32 @@ struct LyricsContainerView: View {
                         } else {
                             ForEach(lyrics) { line in
                                 let isActive = isSynchronized && currentActiveLineId == line.id
+                                let isPast = isSynchronized && (line.timestamp < (currentActiveLine?.timestamp ?? 0))
                                 Button {
                                     if isSynchronized {
                                         onSeek(line.timestamp)
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                        withAnimation(animation) {
                                             isUserScrolling = false
                                             proxy.scrollTo(line.id, anchor: .center)
                                         }
                                     }
                                 } label: {
-                                    Text(line.text)
-                                        .font(.system(size: isSynchronized ? 25 : 19, weight: isActive ? .bold : .medium, design: .rounded))
-                                        .foregroundColor(
-                                            isSynchronized
-                                                ? (isActive ? Color.white : Color.white.opacity(0.35))
-                                                : HawkTheme.textSecondary
-                                        )
-                                        .multilineTextAlignment(.leading)
-                                        .scaleEffect(isActive ? 1.04 : 1.0, anchor: .leading)
-                                        .blur(radius: isSynchronized && !isActive ? 0.35 : 0)
-                                        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isActive)
+                                    if line.isWordSynced && isActive {
+                                        // Word-level highlight
+                                        renderWordSyncedLine(line: line)
+                                    } else {
+                                        Text(line.text)
+                                            .font(.system(size: isSynchronized ? 26 : 19, weight: isActive ? .bold : .medium, design: .rounded))
+                                            .foregroundColor(
+                                                isSynchronized
+                                                    ? (isActive ? Color.white : (isPast ? Color.white.opacity(0.35) : Color.white.opacity(0.22)))
+                                                    : HawkTheme.textSecondary
+                                            )
+                                            .multilineTextAlignment(.leading)
+                                            .scaleEffect(isActive ? 1.04 : 1.0, anchor: .leading)
+                                            .blur(radius: isSynchronized && !isActive ? 0.35 : 0)
+                                            .animation(animation, value: isActive)
+                                    }
                                 }
                                 .buttonStyle(.plain)
                                 .id(line.id)
@@ -424,24 +440,21 @@ struct LyricsContainerView: View {
                         }
                     }
                     .padding(.horizontal, 32)
-                    .padding(.vertical, 28)
+                    .padding(.vertical, 36)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .simultaneousGesture(
                     DragGesture().onChanged { _ in
-                        if !isUserScrolling {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isUserScrolling = true
-                            }
-                        }
+                        handleUserScroll()
                     }
                 )
 
                 // "Sync to Audio" Re-center floating pill when user has manually scrolled away
                 if isUserScrolling && isSynchronized && currentActiveLineId != nil {
                     Button {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        withAnimation(animation) {
                             isUserScrolling = false
+                            userScrollResetTask?.cancel()
                             if let activeId = currentActiveLineId {
                                 proxy.scrollTo(activeId, anchor: .center)
                             }
@@ -469,13 +482,13 @@ struct LyricsContainerView: View {
                 lyrics = []
                 isLoading = true
                 isUserScrolling = false
+                userScrollResetTask?.cancel()
                 let fetched = (try? await LyricsEngine.shared.fetchLyrics(for: song)) ?? []
                 if !Task.isCancelled {
                     lyrics = fetched
                     isLoading = false
-                    // Auto-align to initial position
                     if let initialActive = currentActiveLineId {
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                        withAnimation(animation) {
                             proxy.scrollTo(initialActive, anchor: .center)
                         }
                     }
@@ -483,10 +496,43 @@ struct LyricsContainerView: View {
             }
             .onChange(of: currentActiveLineId) { _, newId in
                 if !isUserScrolling, let newId {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                    withAnimation(animation) {
                         proxy.scrollTo(newId, anchor: .center)
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func renderWordSyncedLine(line: LyricLine) -> some View {
+        HStack(spacing: 4) {
+            ForEach(line.words) { word in
+                let wordActive = (currentTime + 0.12) >= word.startTime && (currentTime + 0.12) <= word.endTime
+                let wordPassed = (currentTime + 0.12) > word.endTime
+                Text(word.text)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundColor(
+                        wordActive ? Color.white : (wordPassed ? Color.white.opacity(0.9) : Color.white.opacity(0.4))
+                    )
+            }
+        }
+        .scaleEffect(1.04, anchor: .leading)
+    }
+
+    private func handleUserScroll() {
+        if !isUserScrolling {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isUserScrolling = true
+            }
+        }
+        userScrollResetTask?.cancel()
+        userScrollResetTask = Task {
+            // Auto-resume follower 4.5s after user ceases interaction
+            try? await Task.sleep(nanoseconds: 4_500_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(animation) {
+                isUserScrolling = false
             }
         }
     }

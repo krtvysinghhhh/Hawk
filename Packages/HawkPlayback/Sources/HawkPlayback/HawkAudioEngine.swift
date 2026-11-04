@@ -26,9 +26,19 @@ public actor HawkAudioEngine {
     private var preloadedItem: AVPlayerItem?
 
     public var onTrackFinished: (@Sendable () async -> Void)?
+    public var onNextRequested: (@Sendable () async -> Void)?
+    public var onPreviousRequested: (@Sendable () async -> Void)?
 
     public func setOnTrackFinished(_ handler: @escaping @Sendable () async -> Void) {
         self.onTrackFinished = handler
+    }
+
+    public func setRemoteCommandHandlers(
+        onNext: @escaping @Sendable () async -> Void,
+        onPrevious: @escaping @Sendable () async -> Void
+    ) {
+        self.onNextRequested = onNext
+        self.onPreviousRequested = onPrevious
     }
 
     public init() {
@@ -391,7 +401,9 @@ public actor HawkAudioEngine {
 
         center.nextTrackCommand.addTarget { _ in
             Task {
-                if let nextSong = await QueueManager.shared.next() {
+                if let handler = await HawkAudioEngine.shared.onNextRequested {
+                    await handler()
+                } else if let nextSong = await QueueManager.shared.next() {
                     try? await HawkAudioEngine.shared.play(song: nextSong)
                 }
             }
@@ -400,8 +412,17 @@ public actor HawkAudioEngine {
 
         center.previousTrackCommand.addTarget { _ in
             Task {
-                if let prevSong = await QueueManager.shared.previous() {
-                    try? await HawkAudioEngine.shared.play(song: prevSong)
+                if let handler = await HawkAudioEngine.shared.onPreviousRequested {
+                    await handler()
+                } else {
+                    let curTime = await HawkAudioEngine.shared.currentTime()
+                    if curTime > 3.0 {
+                        await HawkAudioEngine.shared.seek(to: 0.0)
+                    } else if let prevSong = await QueueManager.shared.previous() {
+                        try? await HawkAudioEngine.shared.play(song: prevSong)
+                    } else {
+                        await HawkAudioEngine.shared.seek(to: 0.0)
+                    }
                 }
             }
             return .success

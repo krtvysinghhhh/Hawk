@@ -15,6 +15,7 @@ public enum HawkError: LocalizedError, Sendable, Hashable {
     case storageError(String)
     case decodeError(String)
     case unauthorized
+    case authRequired(String)
     case cancelled
 
     public var errorDescription: String? {
@@ -27,11 +28,12 @@ public enum HawkError: LocalizedError, Sendable, Hashable {
         case .playbackFailed(let msg): return "Audio playback error: \(msg)"
         case .regionRestricted(let msg): return "Track is restricted in this region: \(msg)"
         case .formatUnsupported(let fmt): return "Audio format '\(fmt)' is unsupported"
-        case .lyricsUnavailable(let msg): return "Lyrics aren't available for this track."
+        case .lyricsUnavailable: return "Lyrics aren't available for this track."
         case .keychainError(let msg): return "Secure Keychain error: \(msg)"
         case .storageError(let msg): return "Storage error: \(msg)"
         case .decodeError(let msg): return "Data parsing error: \(msg)"
         case .unauthorized: return "Provider authentication required"
+        case .authRequired(let msg): return "Authentication required: \(msg)"
         case .cancelled: return "Operation cancelled"
         }
     }

@@ -66,11 +66,11 @@ public actor QueueManager {
     }
 
     // MARK: - Navigation
-    public func next() -> Song? {
+    public func next(isAutoAdvance: Bool = false) -> Song? {
         let timeline = fullTimeline
         guard !timeline.isEmpty else { return nil }
 
-        if repeatMode == .one {
+        if isAutoAdvance && repeatMode == .one {
             return currentSong
         }
 
@@ -130,6 +130,13 @@ public actor QueueManager {
         guard index >= 0 && index < timeline.count else { return nil }
         currentIndex = index
         return timeline[index]
+    }
+
+    public func jumpTo(songId: String) -> Song? {
+        let timeline = fullTimeline
+        guard let idx = timeline.firstIndex(where: { $0.id == songId }) else { return nil }
+        currentIndex = idx
+        return timeline[idx]
     }
 
     public func jumpTo(entryId: UUID) -> Song? {

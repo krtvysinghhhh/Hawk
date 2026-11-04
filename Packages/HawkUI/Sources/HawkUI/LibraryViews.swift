@@ -53,7 +53,7 @@ public struct FavoritesView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .navigationTitle("Favorites")
+        .navigationTitle("Liked Songs")
         .task {
             favorites = await PlaylistStore.shared.getFavorites()
             isLoading = false
@@ -65,6 +65,7 @@ public struct FavoritesView: View {
 public struct PlaylistsView: View {
     @State private var playlists: [Playlist] = []
     @State private var showCreateSheet = false
+    @State private var showImportSheet = false
     @State private var newPlaylistTitle = ""
 
     public init() {}
@@ -81,7 +82,7 @@ public struct PlaylistsView: View {
                                 .frame(width: 50, height: 50)
                                 .overlay(
                                     Image(systemName: playlist.isFavorites ? "heart.fill" : "music.note.list")
-                                        .foregroundColor(playlist.isFavorites ? .red : HawkTheme.primaryAccent)
+                                        .foregroundColor(playlist.isFavorites ? HawkTheme.primaryAccent : HawkTheme.textSecondary)
                                 )
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(playlist.title)
@@ -112,13 +113,28 @@ public struct PlaylistsView: View {
         .navigationTitle("Playlists")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showCreateSheet = true
+                Menu {
+                    Button {
+                        showCreateSheet = true
+                    } label: {
+                        Label("New Playlist", systemImage: "plus")
+                    }
+
+                    Button {
+                        showImportSheet = true
+                    } label: {
+                        Label("Import Playlist (URL / File)", systemImage: "square.and.arrow.down")
+                    }
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: "ellipsis.circle")
                         .foregroundColor(HawkTheme.primaryAccent)
                 }
             }
+        }
+        .sheet(isPresented: $showImportSheet, onDismiss: {
+            Task { playlists = await PlaylistStore.shared.getAllPlaylists() }
+        }) {
+            PlaylistImportView()
         }
         .sheet(isPresented: $showCreateSheet) {
             NavigationStack {
@@ -208,6 +224,17 @@ public struct PlaylistDetailView: View {
             }
         }
         .navigationTitle(playlist.title)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                ShareLink(
+                    item: UniversalPlaylistImporter.exportToM3U8(playlist: playlist),
+                    preview: SharePreview(playlist.title, image: Image(systemName: "music.note.list"))
+                ) {
+                    Label("Export Playlist", systemImage: "square.and.arrow.up")
+                        .foregroundColor(HawkTheme.primaryAccent)
+                }
+            }
+        }
     }
 }
 
@@ -378,6 +405,7 @@ public struct LocalFilesView: View {
 
 // MARK: - Settings View
 public struct SettingsView: View {
+    @AppStorage("hawk_appearance_mode") private var appearanceModeRaw: String = AppearanceMode.system.rawValue
     @State private var selectedQuality: AudioQuality = .high
     @State private var eqEnabled: Bool = EqualizerManager.shared.isEnabled
     @State private var selectedPreset: EqualizerPreset = EqualizerManager.shared.currentPreset
@@ -400,22 +428,46 @@ public struct SettingsView: View {
             Form {
                 // MARK: 1. Appearance & Theme
                 Section(header: Text("Appearance").foregroundColor(HawkTheme.textSecondary)) {
-                    HStack {
-                        Label("Theme", systemImage: "paintbrush.fill")
-                        Spacer()
-                        Text("Dark Mode (AMOLED)")
-                            .foregroundColor(HawkTheme.textSecondary)
+                    Picker(selection: $appearanceModeRaw) {
+                        ForEach(AppearanceMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode.rawValue)
+                        }
+                    } label: {
+                        Label("Appearance", systemImage: "circle.righthalf.filled")
                     }
+                    .pickerStyle(.menu)
+                    .tint(HawkTheme.primaryAccent)
+
                     HStack {
                         Label("Accent Color", systemImage: "circle.fill")
                             .foregroundColor(HawkTheme.primaryAccent)
                         Spacer()
-                        Text("Hawk Coral")
+                        Text("Muted Violet (#7867A8)")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
                 }
 
-                // MARK: 2. Playback
+                // MARK: 2. Integrations
+                Section(header: Text("Integrations").foregroundColor(HawkTheme.textSecondary)) {
+                    NavigationLink(destination: GoogleYouTubeMusicSettingsView()) {
+                        HStack {
+                            Label("Google / YouTube Music", systemImage: "g.circle.fill")
+                                .foregroundColor(HawkTheme.textPrimary)
+                            Spacer()
+                            if GoogleMusicSyncManager.shared.isConnected {
+                                Text("Connected")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            } else {
+                                Text("Not Connected")
+                                    .font(.caption)
+                                    .foregroundColor(HawkTheme.textSecondary)
+                            }
+                        }
+                    }
+                }
+
+                // MARK: 3. Playback
                 Section(header: Text("Playback").foregroundColor(HawkTheme.textSecondary)) {
                     Picker(selection: $selectedQuality) {
                         Text("Data Saver (96 kbps)").tag(AudioQuality.low)
@@ -608,7 +660,7 @@ public struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.2.1 (Build 2)")
+                        Text("1.3.0 (Build 3)")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
 

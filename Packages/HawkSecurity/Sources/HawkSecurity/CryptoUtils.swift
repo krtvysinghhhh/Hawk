@@ -27,6 +27,11 @@ public enum CryptoUtils {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Computes SHA-256 data digest.
+    public static func sha256(data: Data) -> Data {
+        Data(SHA256.hash(data: data))
+    }
+
     /// Decrypts JioSaavn's DES-encrypted media URL string using the key "38346591".
     public static func decryptJioSaavnUrl(
         encryptedUrl: String,
