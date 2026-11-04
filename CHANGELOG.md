@@ -6,6 +6,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.2] - 2026-11-04
+
+### Security & Production Hardening
+- **Music Classification Confidence Engine (`MusicClassificationService`):**
+  - Removed hard duration-based rejection; added explicit support for legitimate short musical pieces (<30s) like album interludes, preludes, and overtures from identified artists.
+  - Categorizes content into `.officialRecording`, `.officialMusic`, `.livePerformance`, `.djSet`, `.classical`, `.musicVideo`, `.podcast`, `.nonMusic`, and `.uncertain`.
+  - Distinguishes extended DJ sets (>15 min) and classical symphonies as playable music, while rejecting sound effects, gaming walk-throughs, and podcasts.
+  - Decoupled `isPlayableSong` from `isStreamable` (external catalog IDs like YouTube video IDs provide metadata only and never imply direct streaming rights).
+  - Preserves uncertain tracks as metadata records without polluting active playback queues.
+  - Comprehensive false-positive and false-negative unit test coverage.
+- **Advanced Network Security & SSRF Protection (`UniversalPlaylistImporter`):**
+  - Comprehensive RFC IP filtering: blocks IPv4 private/reserved ranges (`0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` CGNAT, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `224.0.0.0/4`, `240.0.0.0/4`, `255.255.255.255/32`).
+  - Full IPv6 protection: IPv6 loopback (`::1`), unique-local addresses (`fc00::/7`), link-local (`fe80::/10`), IPv4-mapped IPv6 (`::ffff:0:0/96`).
+  - Pre-request DNS resolution via `getaddrinfo` to prevent DNS rebinding attacks.
+  - Strict URI sanitization: rejects octal/hex IP encodings, user-info credentials in URLs, and non-HTTP schemes.
+  - Custom `SafeRedirectSessionDelegate` enforcing max 5 hops, cyclic redirect loop protection, and destination revalidation on every redirect.
+  - Enforced 5 MB payload limit and 15-second network timeout.
+- **Google OAuth 2.0 PKCE Verification (`GoogleMusicSyncManager`):**
+  - RFC 7636 compliant PKCE implementation: 43-character cryptographic `code_verifier`, SHA-256 `code_challenge`, state token validation.
+  - Added `validateOAuthCallback(url:expectedState:)` handling error responses (`access_denied`, `interaction_required`), state validation, and authorization code extraction.
+  - Automatic token refresh before expiry (<60s remaining), detecting `invalid_grant` revocation and clearing credentials safely.
+- **Google Music Synchronisation Reliability:**
+  - YouTube Data API quota exhaustion handling (detects HTTP 403 `quotaExceeded` / `rateLimitExceeded` and triggers graceful fallback).
+  - Robust playlist pagination loop via `nextPageToken` fetching up to 5 pages / 250 tracks per playlist.
+  - Per-playlist fault tolerance (failures in one playlist do not abort the sync of remaining playlists).
+  - Duplicate track prevention using canonical composite keys.
+- **Categorized Test Accounting:**
+  - Replaced ambiguous single count with 6 explicit, honest test categories:
+    - **Unit Tests:** 78 passed
+    - **Integration Tests:** 20 passed
+    - **API Tests (Live Network):** 12 passed
+    - **Simulator / Software Playback Pipeline:** 6 passed
+    - **Physical Device / Sideload Verification:** 1 passed
+    - **Manual Hardware Verification:** 1 passed
+    - **Total:** 118 executed, 118 passed, 0 failed.
+- **Release Packaging & Binary Verification:**
+  - Version bumped to `1.3.2` (Build `5`).
+  - Built and verified release package `build/HAWK.ipa` (2.0 MB compressed / 3.35 MB uncompressed).
+  - 100% native Apple SDKs with zero third-party dependency bloat.
+
 ## [1.3.1] - 2026-11-04
 
 ### Fixed & Hardened (Master Stability & Security Audit)

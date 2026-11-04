@@ -79,6 +79,12 @@ public struct Song: Identifiable, Codable, Sendable, Hashable {
         self.dateAdded = dateAdded
     }
 
+    /// Explicitly indicates whether this track currently has a direct local or remote stream URI ready for audio playback.
+    /// External catalog identifiers (e.g. YouTube video IDs) represent library metadata only and require resolution before streaming.
+    public var isStreamable: Bool {
+        localFileURL != nil || (mediaUri != nil && !mediaUri!.isEmpty)
+    }
+
     /// Creates a copy of this song assigned to a specific queue tier and unique entry ID.
     public func withQueueMetadata(tier: QueueTier, entryId: UUID = UUID()) -> Song {
         Song(
