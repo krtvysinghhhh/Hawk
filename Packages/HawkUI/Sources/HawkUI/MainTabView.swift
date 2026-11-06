@@ -556,6 +556,12 @@ struct GenreDetailView: View {
     let searchQuery: String
     let accentColor: Color
 
+    init(title: String, searchQuery: String, accentColor: Color) {
+        self.title = title
+        self.searchQuery = searchQuery
+        self.accentColor = accentColor
+    }
+
     @State private var songs: [Song] = []
     @State private var isLoading = true
     private var coordinator = PlaybackCoordinator.shared
