@@ -2,6 +2,7 @@
 
 **Target Branch:** `main`  
 **Source Branch:** `engineering/hawk-1.5.0-stabilization`  
+**Commit SHA:** `88125c21fd884f6b90ff0722c705241c38e0ba18`  
 **Version:** v1.5.0 (Build 7)  
 **Platform:** iOS 17.0+ / iPadOS 17.0+ / Apple CarPlay  
 **Toolchain:** Swift 6.4.2 / Xcode 27.2  
