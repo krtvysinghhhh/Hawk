@@ -23,6 +23,7 @@ public actor HawkAudioEngine {
     private var endObserverToken: Any?
     private var stallObserverToken: Any?
     private var itemStatusObserver: NSKeyValueObservation?
+    private var sessionObservers: [any NSObjectProtocol] = []
     private var crossfadeTask: Task<Void, Never>?
     private var preloadTask: Task<Void, Never>?
     private var preloadedSongId: String?
@@ -55,7 +56,7 @@ public actor HawkAudioEngine {
             self.crossfadeDuration = UserDefaults.standard.double(forKey: "hawk_crossfade_duration")
         }
 
-        setupAudioSession()
+        self.sessionObservers = Self.setupAudioSession()
         setupRemoteCommands()
     }
 
@@ -76,10 +77,33 @@ public actor HawkAudioEngine {
         isUsingPlayerA ? playerB : playerA
     }
 
+    public var isStandbyPlaying: Bool {
+        standbyPlayer.rate > 0
+    }
+
+    public var standbyPlayerItem: AVPlayerItem? {
+        standbyPlayer.currentItem
+    }
+
+    public var activePlayerItem: AVPlayerItem? {
+        activePlayer.currentItem
+    }
+
+    private func stopStandbyPlayer() {
+        standbyPlayer.pause()
+        standbyPlayer.replaceCurrentItem(with: nil)
+        standbyPlayer.volume = 0.0
+    }
+
     // MARK: - Playback Control
     public func play(song: Song, isAutoAdvance: Bool = false) async throws {
         activePlayRequestId &+= 1
         let thisRequestId = activePlayRequestId
+        crossfadeTask?.cancel()
+        preloadTask?.cancel()
+        if !isAutoAdvance {
+            stopStandbyPlayer()
+        }
         playbackState = .loading(song)
 
         do {
@@ -247,11 +271,23 @@ public actor HawkAudioEngine {
     }
 
     public func pause() {
+        crossfadeTask?.cancel()
         activePlayer.pause()
+        standbyPlayer.pause()
         if let song = playbackState.currentSong {
             playbackState = .paused(song)
             updateNowPlayingPlaybackRate(0.0)
         }
+    }
+
+    public func stop() {
+        crossfadeTask?.cancel()
+        preloadTask?.cancel()
+        activePlayer.pause()
+        activePlayer.replaceCurrentItem(with: nil)
+        stopStandbyPlayer()
+        playbackState = .idle
+        updateNowPlayingPlaybackRate(0.0)
     }
 
     public func resume() {
@@ -345,21 +381,29 @@ public actor HawkAudioEngine {
 
                 try? await Task.sleep(nanoseconds: UInt64(stepInterval * 1_000_000_000))
             }
+            if Task.isCancelled {
+                outgoing.pause()
+                outgoing.replaceCurrentItem(with: nil)
+                outgoing.volume = 0.0
+                return
+            }
             outgoing.pause()
             outgoing.replaceCurrentItem(with: nil)
+            outgoing.volume = 0.0
             incoming.volume = 1.0
         }
     }
 
     // MARK: - Audio Session & Interruptions
-    nonisolated private func setupAudioSession() {
+    private static func setupAudioSession() -> [any NSObjectProtocol] {
         #if os(iOS)
+        var observers: [any NSObjectProtocol] = []
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetooth, .allowBluetoothA2DP])
             try session.setActive(true)
 
-            NotificationCenter.default.addObserver(
+            let o1 = NotificationCenter.default.addObserver(
                 forName: AVAudioSession.interruptionNotification,
                 object: nil,
                 queue: .main
@@ -373,8 +417,9 @@ public actor HawkAudioEngine {
                     }
                 }
             }
+            observers.append(o1)
 
-            NotificationCenter.default.addObserver(
+            let o2 = NotificationCenter.default.addObserver(
                 forName: AVAudioSession.routeChangeNotification,
                 object: nil,
                 queue: .main
@@ -386,9 +431,13 @@ public actor HawkAudioEngine {
                     }
                 }
             }
+            observers.append(o2)
         } catch {
             print("Failed to configure AVAudioSession: \(error)")
         }
+        return observers
+        #else
+        return []
         #endif
     }
 

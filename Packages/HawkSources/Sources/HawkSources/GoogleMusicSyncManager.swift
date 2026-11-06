@@ -27,6 +27,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     private let keychain = KeychainStore.shared
     private let httpClient = HawkHttpClient.shared
+    private var inFlightRefreshTask: Task<String, Error>?
 
     // Google OAuth 2.0 configuration
     private let scopes = [
@@ -436,7 +437,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         self.syncStatusMessage = nil
     }
 
-    /// Validates access token and transparently refreshes it via refresh_token if expired.
+    /// Validates access token and transparently refreshes it via refresh_token if expired,
+    /// coordinating concurrent requests to eliminate duplicate token refresh calls.
     public func getValidAccessToken() async throws -> String {
         guard let token = try? await keychain.readString(key: "google_access_token"), !token.isEmpty else {
             throw HawkError.authRequired("Not connected to Google")
@@ -451,10 +453,25 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             return token
         }
 
+        // Coordinate concurrent refresh operations
+        if let existingTask = inFlightRefreshTask {
+            return try await existingTask.value
+        }
+
+        let refreshTask = Task<String, Error> { @MainActor [weak self] in
+            guard let self = self else { throw HawkError.authRequired("Session deallocated") }
+            return try await self.performTokenRefresh(cachedToken: token, expiryTimestamp: expiryTimestamp, now: now)
+        }
+        self.inFlightRefreshTask = refreshTask
+        defer { self.inFlightRefreshTask = nil }
+        return try await refreshTask.value
+    }
+
+    private func performTokenRefresh(cachedToken: String, expiryTimestamp: Double, now: Double) async throws -> String {
         // Token is expired or expiring imminently -> refresh
         guard let refreshToken = try? await keychain.readString(key: "google_refresh_token"), !refreshToken.isEmpty else {
             if expiryTimestamp > now {
-                return token
+                return cachedToken
             }
             throw HawkError.authRequired("Google session expired. Please sign in again.")
         }

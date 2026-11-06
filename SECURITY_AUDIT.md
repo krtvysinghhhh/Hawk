@@ -1,96 +1,93 @@
-# PROJECT HAWK — SECURITY ENGINEERING & THREAT MODEL
+# HAWK v1.5.0 — COMPREHENSIVE SECURITY AUDIT & HARDENING REPORT
 
-**Document ID:** HAWK-DOC-M1-005  
-**Project:** HAWK (Native iOS Music Application)  
-**Security Posture:** Local-First, Zero Telemetry, Hardware-Backed Secure Storage  
-**Audit Date:** 2026-11-02  
-
----
-
-## 1. Threat Modeling & Security Principles
-
-HAWK adheres strictly to the Absolute Engineering Rules (Rules 8, 9, 10, 16, 19). The security architecture is designed around four non-negotiable principles:
-
-1. **Zero Hardcoded Secrets:** No API keys, OAuth client secrets, private signing keys, or server passwords will ever exist in source code, configuration files, or Git history.
-2. **Hardware-Backed Credential Storage:** All sensitive session cookies (YouTube Music SAPISID/HSID), Spotify OAuth tokens, and scrobbling credentials must reside in the **Apple Keychain Services** (`kSecClassGenericPassword` with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`).
-3. **Mandatory Secure Transport (TLS 1.3):** Every network call uses HTTPS with strict system certificate validation. Cleartext HTTP (`usesCleartextTraffic`) is forbidden via `App Transport Security (ATS)`.
-4. **Local-First Privacy & Zero Telemetry:** HAWK collects no analytics, contains no third-party tracking SDKs (Firebase, AppsFlyer, Sentry), and transmits zero telemetry. Listening statistics never leave the local device sandbox.
+**Author:** Security Engineer & Staff Software Architect  
+**Target Release:** HAWK v1.5.0  
+**Scope:** Authentication, Keychain Services, Networking, SSRF/DNS Rebinding, Input Validation, and Storage Security  
+**Status:** PASS — ALL HIGH & MEDIUM FINDINGS REMEDIATED  
 
 ---
 
-## 2. Threat Vector Analysis & Mitigation Matrix
+## 1. Executive Summary
 
-| Threat Vector | Description / Risk | HAWK Mitigation Strategy |
-|---|---|---|
-| **Credential Theft from Disk** | Attacker extracts application data from unencrypted backups or local storage | Passwords, bearer tokens, and session cookies are stored exclusively in the iOS Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Credentials are excluded from iTunes/iCloud backups. |
-| **Man-in-the-Middle (MitM) Attack** | Network attacker intercepts audio stream requests or user authentication | Strict ATS configuration in `Info.plist`. System trust store enforcement. No certificate pinning bypasses or TLS downgrades permitted. |
-| **Path Traversal / Sandbox Escape** | Malicious audio file or downloaded playlist attempts directory traversal | Strict URL sanitization and normalization using Swift `URL.standardized`. All local files reside within isolated `FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)` subdirectories. |
-| **Credential Leakage in Logs** | Sensitive cookies or auth headers dumped to console or crash reports | Strict logging policy: `Logger` / `os_log` redaction filters strip `Cookie`, `Authorization`, and `SAPISIDHASH` headers before outputting to debug logs. |
-| **Memory Scraping of Tokens** | Sensitive tokens linger in plaintext memory | Tokens are loaded into memory only on-demand during request construction and encapsulated within isolated actors (`AuthManager`). |
-| **Arbitrary Code Execution via Plugins** | Malicious JavaScript injected via external module sources | Module sources run in sandboxed Apple `JSContext` with restricted global objects (no filesystem, no arbitrary networking beyond controlled HTTP fetch delegate). |
-| **DRM / Policy Violation** | Scraping encrypted streams or circumventing access controls | HAWK accesses only authorized, publicly accessible, or lawful user-authenticated streams. No DRM bypasses are implemented. |
+This security audit conducted an exhaustive source-level and architectural security inspection of the HAWK codebase prior to the v1.5.0 release. 
+
+Key security enhancements implemented in this release:
+1. **Keychain State Preservation:** Eliminated the potential for permanent credential loss during token refreshes by adopting atomic `SecItemUpdate` / `SecItemAdd` semantics.
+2. **SSRF & DNS Rebinding Hardening:** Audited and verified strict rejection of RFC 1918, RFC 3927 (link-local), RFC 6598 (carrier-grade NAT), loopback, multicast, and IPv6 mapped addresses.
+3. **HTTP Header & Credential Protection:** Verified that OAuth tokens and auth cookies are isolated to authorized destination endpoints and never leaked in error logs or redirect responses.
+4. **Cancellation & Throttling Resilience:** Hardened network clients to prevent infinite retry loops on rate limiting (HTTP 429) and respected `Retry-After` bounds.
 
 ---
 
-## 3. Apple Keychain Implementation Architecture
+## 2. Security Findings & Remediation Register
 
-In HAWK, the `KeychainStore` actor implements secure, type-safe credential persistence:
-
-```swift
-// HawkSecurity / KeychainStore.swift
-import Foundation
-import Security
-
-public actor KeychainStore {
-    public static let shared = KeychainStore()
-    private let service = "com.hawk.music.auth"
-
-    public func save(key: String, data: Data) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        SecItemDelete(query as CFDictionary)
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeychainError.secFailure(status) }
-    }
-
-    public func read(key: String) throws -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = item as? Data else {
-            throw KeychainError.secFailure(status)
-        }
-        return data
-    }
-
-    public func delete(key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
-}
-```
+### Finding 1: Credential Destruction Vulnerability in Keychain Replacement
+- **File:** `Packages/HawkSecurity/Sources/HawkSecurity/KeychainStore.swift`
+- **Severity:** HIGH (Data Loss / Denial of Service)
+- **Vulnerability Description:** Previously, `KeychainStore.save(key:data:)` executed `SecItemDelete` unconditionally before calling `SecItemAdd`. If `SecItemAdd` subsequently failed (due to device lock status, Keychain daemon unavailability, or memory constraints), the pre-existing credential was permanently deleted, forcing the user into an unrecoverable logged-out state.
+- **Remediation:** Replaced destructive deletion with safe atomic upsert:
+  1. Call `SecItemUpdate(searchQuery, updateAttributes)`.
+  2. If the item does not exist (`errSecItemNotFound`), call `SecItemAdd(insertQuery, nil)`.
+  3. If update fails, the pre-existing credential remains intact and undamaged.
+- **Residual Risk:** None. Verified via automated XCTest suite.
 
 ---
 
-## 4. App Sandbox & Privacy Enforcements
+### Finding 2: Uncoordinated Concurrent OAuth Token Refreshes
+- **File:** `Packages/HawkSources/Sources/HawkSources/GoogleMusicSyncManager.swift`
+- **Severity:** MEDIUM (Race Condition / Account De-synchronization)
+- **Vulnerability Description:** When multiple concurrent background tasks requested a valid Google OAuth access token after expiry, multiple parallel POST requests were dispatched to `https://oauth2.googleapis.com/token`. This introduced race conditions with refresh token rotation and wasted network resources.
+- **Remediation:** Introduced in-flight task coordination (`inFlightRefreshTask`). All callers await the identical in-flight task, ensuring strictly one token refresh occurs.
+- **Residual Risk:** None.
 
-1. **Microphone / Camera:** Not requested. HAWK does not require audio recording or camera permissions.
-2. **Local Music Import:** Handled via standard system `UIDocumentPickerViewController` with security-scoped bookmarks (`startAccessingSecurityScopedResource()`), ensuring user consent for file access.
-3. **Background Audio:** Declared in `Info.plist` under `UIBackgroundModes` with `audio` key, strictly constrained to active playback sessions.
-4. **Data Deletion:** A one-tap "Erase All Data" option in Settings completely wipes the app's document directory, caches, and Keychain items.
+---
+
+### Finding 3: SSRF & DNS Rebinding in Remote Playlist Importer
+- **File:** `Packages/HawkSources/Sources/HawkSources/UniversalPlaylistImporter.swift`
+- **Severity:** HIGH (Server-Side Request Forgery / Internal Network Probing)
+- **Vulnerability Description:** Remote playlist imports fetching M3U/M3U8 URLs could be exploited to probe internal networks (`10.0.0.0/8`, `192.168.0.0/16`, `172.16.0.0/12`), loopback services (`127.0.0.1`), or cloud metadata endpoints (`169.254.169.254`).
+- **Remediation:** Verified multi-stage validation:
+  1. Scheme restricted strictly to `http` and `https`.
+  2. User-info embedded credentials (`user:pass@host`) rejected.
+  3. Octal, hexadecimal, and percent-encoded IP hosts rejected.
+  4. Pre-flight DNS resolution via `getaddrinfo` validating that all returned IPv4 and IPv6 addresses are non-private and non-reserved.
+  5. Custom `SafeRedirectSessionDelegate` enforcing identical checks on every HTTP redirect hop (maximum 5 hops, cyclic loop detection).
+  6. Maximum payload size capped at 5 MB; HLS stream manifests rejected.
+- **Residual Risk:** Low. DNS rebinding mitigated by validating all resolved addresses prior to and during connection.
+
+---
+
+### Finding 4: File Path Traversal in Offline Downloads
+- **File:** `Packages/HawkSources/Sources/HawkSources/DownloadManager.swift`
+- **Severity:** MEDIUM (Directory Traversal / Arbitrary File Overwrite)
+- **Vulnerability Description:** Unsanitized song IDs containing `../` or path delimiters could attempt to write outside the dedicated sandboxed `Downloads/` directory.
+- **Remediation:** Enforced strict filename sanitization:
+  - Stripped all `..` occurrences.
+  - Replaced non-alphanumeric characters with underscores.
+  - Restricted output directory strictly to the application's sandboxed document downloads directory.
+- **Residual Risk:** None.
+
+---
+
+### Finding 5: Quality Ceiling Fallback Data Consumption Risk
+- **File:** `Packages/HawkSources/Sources/HawkSources/YouTubeSource.swift`
+- **Severity:** LOW (User Data Preference Violation)
+- **Vulnerability Description:** When a requested quality ceiling (e.g. Data Saver 96 kbps) could not be met by any available format, the fallback chose the highest bitrate format (256 kbps), violating explicit user data saver preferences.
+- **Remediation:** Enforced strict ceiling adherence: formats exceeding `qualityCeiling.maxKbps` are rejected. If no format conforms, throws `HawkError.streamNotFound`.
+- **Residual Risk:** None.
+
+---
+
+## 3. Privacy & Telemetry Review
+
+- **Zero Analytics Trackers:** HAWK contains zero third-party analytics SDKs (no Firebase Analytics, no Google Analytics, no TelemetryDeck, no Mixpanel).
+- **Zero Advertising SDKs:** No ad libraries or tracking frameworks are bundled.
+- **Local-First History:** All listening history, top artists, replay statistics, and play counts are computed and persisted locally inside the sandboxed Application Support directory.
+- **Keychain Enclave Protection:** All OAuth tokens, cookies, and secrets are stored with accessibility `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
+
+---
+
+## 4. Residual Risks & Operational Guidance
+
+1. **Third-Party Provider API Changes:** YouTube Music and JioSaavn APIs are unofficial reverse-engineered endpoints. Changes to response payloads could cause stream resolution failures, but will fail safely with `HawkError` rather than crashing or exposing security vulnerabilities.
+2. **Physical Device Jailbreaks:** On compromised (jailbroken) iOS devices, root access can bypass Keychain accessibility restrictions. This is an OS-level risk external to the application.

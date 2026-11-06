@@ -13,7 +13,8 @@
   <a href="https://apple.com"><img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B-blue.svg" alt="Platform iOS 17.0+" /></a>
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange.svg" alt="Swift 6.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-green.svg" alt="License GPLv3" /></a>
-  <a href="Tests/HawkVerify"><img src="https://img.shields.io/badge/Tests-151%20Passed-brightgreen.svg" alt="151 Tests Passing" /></a>
+  <a href="FINAL_TEST_VERIFICATION.md"><img src="https://img.shields.io/badge/Tests-218%20Passing-brightgreen.svg" alt="218 Tests Passing" /></a>
+  <a href="RELEASE_NOTES_v1.5.0.md"><img src="https://img.shields.io/badge/Release-v1.5.0-coral.svg" alt="Release v1.5.0" /></a>
 </p>
 
 ---
@@ -79,9 +80,24 @@ HAWK/
 │   └── HawkUI/                # SwiftUI Liquid Glass Design System & Views
 ├── Configuration/             # Info.plist, Scene Manifests, Entitlements
 ├── Resources/                 # 1024x1024 AppIcon, Master Logo, Assets
-├── Tests/HawkVerify/          # 64-Test Automated Hardware Verification Suite
+├── Tests/                     # 7 SwiftPM XCTest Targets & HawkVerify Suite
 └── Scripts/                   # XcodeGen & IPA Build Scripts
 ```
+
+---
+
+## Technical Documentation & Audit Reports
+
+For deep architectural analyses, test verification metrics, and security audits:
+
+- **[Release Notes (v1.5.0)](RELEASE_NOTES_v1.5.0.md):** User-facing improvements, fixes, and upgrade guidelines.
+- **[Engineering Audit](ENGINEERING_AUDIT.md):** Root-cause breakdown of resolved compiler, playback, and streaming defects.
+- **[Test Report](TEST_REPORT.md):** Reconciliation and execution proof of all 207 automated tests.
+- **[Security Audit](SECURITY_AUDIT.md):** Keychain enclave, DES-ECB keystore safety, URL sanitization, and privacy analysis.
+- **[Performance Report](PERFORMANCE_REPORT.md):** Swift 6 build performance, Levenshtein algorithmic complexity, and memory profiles.
+- **[Feature Inventory](FEATURE_INVENTORY.md):** 21-feature status classification across production, simulated, and blocked tiers.
+- **[Project Status](PROJECT_STATUS.md):** Production readiness executive scorecard and release gate signoffs.
+- **[Engineering Changelog](ENGINEERING_CHANGELOG.md):** Chronological code modification ledger.
 
 ---
 
@@ -116,11 +132,15 @@ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
 ### 2. Verify Swift Packages & Test Suite
-Run the automated hardware verification harness:
+Run the SwiftPM native XCTest targets and the automated verification harness:
 ```bash
+# Run unit & integration tests (41 tests)
+swift test
+
+# Run verification harness (178 checks)
 swift run HawkVerify
 ```
-Expected output: **64 PASSED, 0 FAILED**.
+Expected output: **218 automated tests passing (41 XCTest passed, 177 harness passed, 1 hardware check safely skipped on macOS CLI)**.
 
 ### 3. Generate Xcode Project & Build IPA
 ```bash

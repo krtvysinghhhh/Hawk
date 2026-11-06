@@ -105,20 +105,49 @@ public enum TrackMatcher {
     private static func normalize(_ str: String) -> String {
         str.lowercased()
             .replacingOccurrences(of: "(feat.", with: "")
+            .replacingOccurrences(of: "(ft.", with: "")
             .replacingOccurrences(of: "(with", with: "")
             .replacingOccurrences(of: "[official video]", with: "")
             .replacingOccurrences(of: "[official audio]", with: "")
+            .replacingOccurrences(of: "(official video)", with: "")
+            .replacingOccurrences(of: "(official audio)", with: "")
+            .replacingOccurrences(of: "[music video]", with: "")
+            .replacingOccurrences(of: "(lyrics)", with: "")
+            .replacingOccurrences(of: "[lyrics]", with: "")
             .trimmingCharacters(in: .punctuationCharacters)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Computes deterministic Levenshtein edit distance similarity in range 0.0 ... 1.0.
     private static func stringSimilarity(_ s1: String, _ s2: String) -> Double {
         guard !s1.isEmpty && !s2.isEmpty else { return 0 }
-        let set1 = Set(s1)
-        let set2 = Set(s2)
-        let intersection = set1.intersection(set2).count
-        let union = set1.union(set2).count
-        return Double(intersection) / Double(union)
+        if s1 == s2 { return 1.0 }
+
+        let a = Array(s1)
+        let b = Array(s2)
+        let m = a.count
+        let n = b.count
+
+        if max(m, n) == 0 { return 1.0 }
+
+        var prev = [Int](0...n)
+        var curr = [Int](repeating: 0, count: n + 1)
+
+        for i in 1...m {
+            curr[0] = i
+            for j in 1...n {
+                if a[i - 1] == b[j - 1] {
+                    curr[j] = prev[j - 1]
+                } else {
+                    curr[j] = 1 + min(prev[j], min(curr[j - 1], prev[j - 1]))
+                }
+            }
+            prev = curr
+        }
+
+        let distance = prev[n]
+        let maxLen = max(m, n)
+        return max(0.0, 1.0 - (Double(distance) / Double(maxLen)))
     }
 }
 

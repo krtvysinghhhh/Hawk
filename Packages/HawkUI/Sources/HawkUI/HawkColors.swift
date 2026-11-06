@@ -157,6 +157,7 @@ public enum HawkTheme {
     }
 
     // MARK: - Native iOS System Bar Styling
+    @MainActor
     public static func configureSystemAppearance() {
         #if canImport(UIKit)
         // Configure Native UITabBar
@@ -220,43 +221,58 @@ public struct HawkLiquidGlassModifier: ViewModifier {
     public var strokeOpacity: Double = 0.20
     public var interactive: Bool = false
 
+    @ViewBuilder
+    private var backgroundFill: some View {
+        if reduceTransparency {
+            HawkTheme.cardBackground
+        } else {
+            let opacity = colorScheme == .dark ? 0.80 : 0.90
+            Rectangle()
+                .fill(HawkTheme.cardBackground.opacity(opacity))
+                .background(.ultraThinMaterial)
+        }
+    }
+
+    private var borderColors: [Color] {
+        if colorScheme == .dark {
+            return [
+                Color.white.opacity(strokeOpacity),
+                Color.white.opacity(strokeOpacity * 0.4),
+                Color.clear,
+                Color.white.opacity(strokeOpacity * 0.15)
+            ]
+        } else {
+            return [
+                Color.black.opacity(strokeOpacity * 0.3),
+                Color.black.opacity(strokeOpacity * 0.15),
+                Color.clear,
+                Color.black.opacity(strokeOpacity * 0.08)
+            ]
+        }
+    }
+
+    private var borderGradient: LinearGradient {
+        LinearGradient(
+            colors: borderColors,
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var shadowColor: Color {
+        colorScheme == .dark ? Color.black.opacity(0.30) : Color.black.opacity(0.06)
+    }
+
     public func body(content: Content) -> some View {
         content
-            .background(
-                Group {
-                    if reduceTransparency {
-                        HawkTheme.cardBackground
-                    } else {
-                        Rectangle()
-                            .fill(HawkTheme.cardBackground.opacity(colorScheme == .dark ? 0.80 : 0.90))
-                            .background(.ultraThinMaterial)
-                    }
-                }
-            )
+            .background(backgroundFill)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: colorScheme == .dark ? [
-                                Color.white.opacity(strokeOpacity),
-                                Color.white.opacity(strokeOpacity * 0.4),
-                                Color.clear,
-                                Color.white.opacity(strokeOpacity * 0.15)
-                            ] : [
-                                Color.black.opacity(strokeOpacity * 0.3),
-                                Color.black.opacity(strokeOpacity * 0.15),
-                                Color.clear,
-                                Color.black.opacity(strokeOpacity * 0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.8
-                    )
+                    .strokeBorder(borderGradient, lineWidth: 0.8)
             )
             .shadow(
-                color: colorScheme == .dark ? Color.black.opacity(0.30) : Color.black.opacity(0.06),
+                color: shadowColor,
                 radius: 12,
                 x: 0,
                 y: 5

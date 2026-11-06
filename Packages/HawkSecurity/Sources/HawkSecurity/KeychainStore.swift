@@ -22,28 +22,41 @@ public actor KeychainStore {
         self.isInMemoryOnly = inMemoryOnly
     }
 
-    /// Persists sensitive binary data into the Keychain.
+    /// Persists sensitive binary data into the Keychain using atomic upsert (preventing credential loss).
     public func save(key: String, data: Data) throws {
         if isInMemoryOnly {
             inMemoryStorage[key] = data
             return
         }
 
-        let query: [String: Any] = [
+        let searchQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: key,
+            kSecAttrAccount as String: key
+        ]
+
+        let updateAttributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
 
-        // Remove any pre-existing entry before inserting updated credentials
-        SecItemDelete(query as CFDictionary)
-        let status = SecItemAdd(query as CFDictionary, nil)
-
-        guard status == errSecSuccess else {
-            throw HawkError.keychainError("SecItemAdd failed for key '\(key)' with OSStatus: \(status)")
+        let updateStatus = SecItemUpdate(searchQuery as CFDictionary, updateAttributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
         }
+
+        if updateStatus == errSecItemNotFound {
+            var insertQuery = searchQuery
+            insertQuery[kSecValueData as String] = data
+            insertQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let addStatus = SecItemAdd(insertQuery as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw HawkError.keychainError("SecItemAdd failed for key '\(key)' with OSStatus: \(addStatus)")
+            }
+            return
+        }
+
+        throw HawkError.keychainError("SecItemUpdate failed for key '\(key)' with OSStatus: \(updateStatus)")
     }
 
     /// Reads sensitive binary data from the Keychain.
@@ -88,6 +101,23 @@ public actor KeychainStore {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw HawkError.keychainError("SecItemDelete failed for key '\(key)' with OSStatus: \(status)")
+        }
+    }
+
+    /// Removes all items for this service from the Keychain.
+    public func purgeAll() throws {
+        if isInMemoryOnly {
+            inMemoryStorage.removeAll()
+            return
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw HawkError.keychainError("SecItemDelete (purgeAll) failed with OSStatus: \(status)")
         }
     }
 
