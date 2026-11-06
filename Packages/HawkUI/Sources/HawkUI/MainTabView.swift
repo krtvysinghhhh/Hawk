@@ -465,16 +465,60 @@ struct FeaturedHeroView: View {
 }
 
 // MARK: - Live Explore View
+struct GenreCategory: Identifiable {
+    let id = UUID()
+    let name: String
+    let icon: String
+    let query: String
+    let color: Color
+}
+
+struct GenreCardView: View {
+    let genre: GenreCategory
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            LinearGradient(
+                colors: [genre.color.opacity(0.8), genre.color.opacity(0.4)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .frame(height: 100)
+            .cornerRadius(12)
+
+            HStack {
+                VStack(alignment: .leading) {
+                    Spacer()
+                    Text(genre.name)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(12)
+                }
+                Spacer()
+                Image(systemName: genre.icon)
+                    .font(.system(size: 28))
+                    .foregroundColor(.white.opacity(0.35))
+                    .padding(12)
+            }
+        }
+    }
+}
+
 struct ExploreView: View {
-    private let genres = [
-        ("Pop Hits", "music.note", "Pop Hits", Color.purple),
-        ("Hip-Hop & Rap", "flame.fill", "Hip Hop Hits", Color.orange),
-        ("Rock & Metal", "guitars.fill", "Rock Hits", Color.red),
-        ("Chill & Lo-Fi", "cup.and.saucer.fill", "Lofi Beats Chill", Color.blue),
-        ("Bollywood & Punjabi", "sparkles", "Bollywood Hits", Color.pink),
-        ("Electronic / Dance", "bolt.fill", "EDM Dance Hits", Color.cyan),
-        ("Acoustic / Indie", "leaf.fill", "Indie Folk Acoustic", Color.green),
-        ("R&B / Soul", "heart.fill", "RnB Hits", Color.indigo)
+    private let genres: [GenreCategory] = [
+        GenreCategory(name: "Pop Hits", icon: "music.note", query: "Pop Hits", color: Color.purple),
+        GenreCategory(name: "Hip-Hop & Rap", icon: "flame.fill", query: "Hip Hop Hits", color: Color.orange),
+        GenreCategory(name: "Rock & Metal", icon: "guitars.fill", query: "Rock Hits", color: Color.red),
+        GenreCategory(name: "Chill & Lo-Fi", icon: "cup.and.saucer.fill", query: "Lofi Beats Chill", color: Color.blue),
+        GenreCategory(name: "Bollywood & Punjabi", icon: "sparkles", query: "Bollywood Hits", color: Color.pink),
+        GenreCategory(name: "Electronic / Dance", icon: "bolt.fill", query: "EDM Dance Hits", color: Color.cyan),
+        GenreCategory(name: "Acoustic / Indie", icon: "leaf.fill", query: "Indie Folk Acoustic", color: Color.green),
+        GenreCategory(name: "R&B / Soul", icon: "heart.fill", query: "RnB Hits", color: Color.indigo)
+    ]
+
+    private let gridColumns = [
+        GridItem(.flexible()),
+        GridItem(.flexible())
     ]
 
     var body: some View {
@@ -488,33 +532,10 @@ struct ExploreView: View {
                             .foregroundColor(HawkTheme.textPrimary)
                             .padding(.horizontal)
 
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                            ForEach(genres, id: \.0) { genre in
-                                NavigationLink(destination: GenreDetailView(title: genre.0, searchQuery: genre.2, accentColor: genre.3)) {
-                                    ZStack(alignment: .bottomLeading) {
-                                        LinearGradient(
-                                            colors: [genre.3.opacity(0.8), genre.3.opacity(0.4)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                        .frame(height: 100)
-                                        .cornerRadius(12)
-
-                                        HStack {
-                                            VStack(alignment: .leading) {
-                                                Spacer()
-                                                Text(genre.0)
-                                                    .font(.system(size: 16, weight: .bold))
-                                                    .foregroundColor(.white)
-                                                    .padding(12)
-                                            }
-                                            Spacer()
-                                            Image(systemName: genre.1)
-                                                .font(.system(size: 28))
-                                                .foregroundColor(.white.opacity(0.35))
-                                                .padding(12)
-                                        }
-                                    }
+                        LazyVGrid(columns: gridColumns, spacing: 14) {
+                            ForEach(genres) { genre in
+                                NavigationLink(destination: GenreDetailView(title: genre.name, searchQuery: genre.query, accentColor: genre.color)) {
+                                    GenreCardView(genre: genre)
                                 }
                             }
                         }
@@ -574,6 +595,7 @@ struct SearchView: View {
     @State private var selectedSource = 0 // 0: All, 1: YouTube, 2: JioSaavn
     @State private var results: [Song] = []
     @State private var isSearching = false
+    @State private var searchTask: Task<Void, Never>?
     private var coordinator = PlaybackCoordinator.shared
 
     var body: some View {
@@ -666,6 +688,7 @@ struct SearchView: View {
     }
 
     private func triggerSearch(for text: String) {
+        searchTask?.cancel()
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else {
             results = []
@@ -674,8 +697,9 @@ struct SearchView: View {
         }
 
         isSearching = true
-        Task {
+        searchTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000) // 350ms debounce
+            if Task.isCancelled { return }
             guard clean == self.query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
 
             var fetched: [Song] = []
@@ -691,8 +715,10 @@ struct SearchView: View {
                 fetched = TrackDeduplicator.deduplicate(rSaavn + rYt)
             }
 
-            self.results = fetched
-            self.isSearching = false
+            if !Task.isCancelled {
+                self.results = fetched
+                self.isSearching = false
+            }
         }
     }
 }

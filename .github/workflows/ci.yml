@@ -29,6 +29,9 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Run Swift Package Manager Test Suites (XCTest)
+        run: swift test
+
       - name: Run Automated Test Harness (HawkVerify)
         run: swift run HawkVerify
 

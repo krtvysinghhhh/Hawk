@@ -92,6 +92,12 @@ public actor DownloadManager {
             return
         }
 
+        // Prevent duplicate simultaneous downloads: await in-flight task if already running
+        if let existingTask = activeDownloadTasks[song.id] {
+            try await existingTask.value
+            return
+        }
+
         activeStates[song.id] = .queued
 
         let task = Task<Void, Error> { [weak self] in
@@ -103,7 +109,7 @@ public actor DownloadManager {
 
             await self.updateState(songId: song.id, state: .downloading(progress: 0.25))
 
-            let safeId = song.id.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+            let safeId = song.id.replacingOccurrences(of: "..", with: "").components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
             let fileExtension = stream.url.pathExtension.isEmpty ? "m4a" : stream.url.pathExtension
             let destinationURL = self.downloadsDirectory.appendingPathComponent("\(safeId).\(fileExtension)")
 

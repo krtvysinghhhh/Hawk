@@ -47,4 +47,25 @@ final class HawkPlaybackTests: XCTestCase {
         XCTAssertEqual(eq.currentPreset.name, "Bass Booster")
         XCTAssertEqual(eq.customGains[0], 6.0)
     }
+
+    func testCrossfadeDurationClamping() async {
+        let engine = HawkAudioEngine()
+        await engine.setCrossfadeDuration(25.0)
+        let dur = await engine.crossfadeDuration
+        XCTAssertEqual(dur, 12.0)
+
+        await engine.setCrossfadeDuration(-5.0)
+        let durMin = await engine.crossfadeDuration
+        XCTAssertEqual(durMin, 0.0)
+    }
+
+    func testPlaybackStateTransitions() async {
+        let engine = HawkAudioEngine()
+        let initial = await engine.playbackState
+        XCTAssertFalse(initial.isPlaying)
+
+        await engine.pause()
+        let pausedState = await engine.playbackState
+        XCTAssertFalse(pausedState.isPlaying)
+    }
 }

@@ -32,8 +32,26 @@ final class HawkSecurityTests: XCTestCase {
 
         XCTAssertEqual(retrieved, value)
 
-        await store.delete(key: key)
+        try await store.delete(key: key)
         let afterDelete = try await store.readString(key: key)
         XCTAssertNil(afterDelete)
+    }
+
+    func testKeychainStoreUpsertPreservesState() async throws {
+        let store = KeychainStore(serviceName: "com.hawk.test.upsert", inMemoryOnly: true)
+        let key = "sync_token"
+
+        try await store.saveString(key: key, value: "initial_token_123")
+        let first = try await store.readString(key: key)
+        XCTAssertEqual(first, "initial_token_123")
+
+        // Overwrite via atomic upsert
+        try await store.saveString(key: key, value: "updated_token_456")
+        let updated = try await store.readString(key: key)
+        XCTAssertEqual(updated, "updated_token_456")
+
+        try await store.delete(key: key)
+        let deleted = try await store.readString(key: key)
+        XCTAssertNil(deleted)
     }
 }

@@ -36,6 +36,7 @@ public actor HawkHttpClient {
         var currentDelay: Double = 0.5
 
         while true {
+            try Task.checkCancellation()
             attempt += 1
             do {
                 let (data, response) = try await session.data(for: req)
@@ -43,19 +44,47 @@ public actor HawkHttpClient {
                     throw HawkError.networkError("Invalid non-HTTP response")
                 }
 
+                // Differentiate status codes: 429 (rate-limit) and 5xx (server errors) are retryable
                 if httpResponse.statusCode == 429 || (500...599).contains(httpResponse.statusCode) {
                     if attempt <= maxRetries {
-                        try await Task.sleep(nanoseconds: UInt64(currentDelay * 1_000_000_000))
-                        currentDelay *= 2.0
+                        // Respect Retry-After header if present
+                        if let retryAfterStr = httpResponse.value(forHTTPHeaderField: "Retry-After"),
+                           let retryAfterSecs = Double(retryAfterStr), retryAfterSecs > 0 {
+                            let boundDelay = min(retryAfterSecs, 10.0)
+                            try await Task.sleep(nanoseconds: UInt64(boundDelay * 1_000_000_000))
+                        } else {
+                            let jitter = Double.random(in: 0.8...1.2)
+                            try await Task.sleep(nanoseconds: UInt64(currentDelay * jitter * 1_000_000_000))
+                            currentDelay = min(currentDelay * 2.0, 8.0)
+                        }
                         continue
                     }
                 }
 
                 return (data, httpResponse)
             } catch {
+                // Strict propagation: never retry cancellation
+                if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                    throw CancellationError()
+                }
+
+                // Check for non-retryable URL errors
+                if let urlErr = error as? URLError {
+                    let nonRetryableCodes: [URLError.Code] = [
+                        .badURL,
+                        .unsupportedURL,
+                        .userAuthenticationRequired,
+                        .appTransportSecurityRequiresSecureConnection
+                    ]
+                    if nonRetryableCodes.contains(urlErr.code) {
+                        throw HawkError.networkError(urlErr.localizedDescription)
+                    }
+                }
+
                 if attempt <= maxRetries {
-                    try await Task.sleep(nanoseconds: UInt64(currentDelay * 1_000_000_000))
-                    currentDelay *= 2.0
+                    let jitter = Double.random(in: 0.8...1.2)
+                    try await Task.sleep(nanoseconds: UInt64(currentDelay * jitter * 1_000_000_000))
+                    currentDelay = min(currentDelay * 2.0, 8.0)
                     continue
                 }
                 throw HawkError.networkError(error.localizedDescription)

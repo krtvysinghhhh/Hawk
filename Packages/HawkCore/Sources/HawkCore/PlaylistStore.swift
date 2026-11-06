@@ -49,11 +49,16 @@ public actor PlaylistStore {
         if let data = try? Data(contentsOf: url) {
             // Attempt 1: Versioned envelope
             if let envelope = try? JSONDecoder().decode(PlaylistEnvelope.self, from: data) {
+                if envelope.schemaVersion > PlaylistEnvelope.currentVersion {
+                    // Forward-compatibility protection: preserve future schema file before touch
+                    let futureURL = url.deletingPathExtension().appendingPathExtension("future_schema_backup.json")
+                    try? FileManager.default.copyItem(at: url, to: futureURL)
+                }
                 for p in envelope.playlists {
                     initialPlaylists[p.id] = p
                 }
             }
-            // Attempt 2: Legacy unversioned [Playlist] array (schema v0 migration)
+            // Attempt 2: Legacy unversioned [Playlist] array (schema v0 -> v1 migration)
             else if let list = try? JSONDecoder().decode([Playlist].self, from: data) {
                 for p in list {
                     initialPlaylists[p.id] = p
