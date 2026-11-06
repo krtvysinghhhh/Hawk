@@ -18,12 +18,12 @@ Previous documentation in the repository contained conflicting test counts:
 ### Authoritative Reconciliation for v1.5.0:
 1. **SwiftPM XCTest Suites (`swift test`):**
    - 7 dedicated test targets declared in `Package.swift`.
-   - **29 executed, 29 passed, 0 failed.**
+   - **41 executed, 41 passed, 0 failed.**
 2. **Comprehensive Verification Harness (`swift run HawkVerify`):**
    - 12 audit categories.
    - **178 executed, 177 passed, 1 skipped (hardware-dependent), 0 failed.**
 3. **Total Verified Automated Tests:**
-   - **207 automated tests executed and verified with 0 failures.**
+   - **218 passing automated tests (1 hardware check safely skipped) with 0 failures.**
 
 ---
 
@@ -32,19 +32,19 @@ Previous documentation in the repository contained conflicting test counts:
 Command executed: `swift test`
 
 ```
-Test Suite 'All tests' started at 2026-11-06 20:14:25.
+Test Suite 'All tests' started at 2026-11-06 20:43:16.
 ─────────────────────────────────────────────────────────────────────────────
 TARGET / SUITE         TEST CASES EXECUTED    PASSED    FAILED   TIME
 ─────────────────────────────────────────────────────────────────────────────
-HawkCoreTests                  6                 6         0     0.013s
-HawkSecurityTests              4                 4         0     0.049s
-HawkNetworkingTests            3                 3         0     0.007s
-HawkSourcesTests               7                 7         0     0.009s
-HawkPlaybackTests              5                 5         0     0.003s
+HawkCoreTests                  8                 8         0     0.010s
+HawkSecurityTests              6                 6         0     0.046s
+HawkNetworkingTests            5                 5         0     0.006s
+HawkSourcesTests              10                10         0     0.007s
+HawkPlaybackTests              8                 8         0     0.005s
 HawkLyricsTests                2                 2         0     0.002s
-HawkStatsTests                 2                 2         0     0.004s
+HawkStatsTests                 2                 2         0     0.003s
 ─────────────────────────────────────────────────────────────────────────────
-TOTAL XCTEST                  29                29         0     0.087s
+TOTAL XCTEST                  41                41         0     0.079s
 ─────────────────────────────────────────────────────────────────────────────
 ```
 

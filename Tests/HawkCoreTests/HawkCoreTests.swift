@@ -76,4 +76,34 @@ final class HawkCoreTests: XCTestCase {
         let deduped = TrackDeduplicator.deduplicate([s1, s2, s3])
         XCTAssertEqual(deduped.count, 2)
     }
+
+    func testFutureSchemaPreservation() async throws {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("FuturePlaylists_\(UUID().uuidString).json")
+        let futureBackupURL = tempURL.deletingPathExtension().appendingPathExtension("future_schema_backup.json")
+        defer {
+            try? FileManager.default.removeItem(at: tempURL)
+            try? FileManager.default.removeItem(at: futureBackupURL)
+        }
+
+        let futureEnvelope = PlaylistEnvelope(playlists: [Playlist(title: "Future PL")], schemaVersion: 99, timestamp: Date())
+        let encodedData = try JSONEncoder().encode(futureEnvelope)
+        try encodedData.write(to: tempURL)
+
+        _ = PlaylistStore(storageURL: tempURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: futureBackupURL.path))
+    }
+
+    func testLegacyArraySchemaMigration() async throws {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("LegacyPlaylists_\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let legacyList = [Playlist(id: "legacy_pl_1", title: "Old Playlist")]
+        let encodedData = try JSONEncoder().encode(legacyList)
+        try encodedData.write(to: tempURL)
+
+        let store = PlaylistStore(storageURL: tempURL)
+        let pl = await store.getPlaylist(id: "legacy_pl_1")
+        XCTAssertNotNil(pl)
+        XCTAssertEqual(pl?.title, "Old Playlist")
+    }
 }

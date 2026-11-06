@@ -54,4 +54,27 @@ final class HawkSecurityTests: XCTestCase {
         let deleted = try await store.readString(key: key)
         XCTAssertNil(deleted)
     }
+
+    func testKeychainFailureRecovery() async throws {
+        let store = KeychainStore(serviceName: "com.hawk.test.recovery", inMemoryOnly: true)
+        // Reading non-existent key returns nil
+        let nonExistent = try await store.readString(key: "non_existent_key")
+        XCTAssertNil(nonExistent)
+
+        // Deleting non-existent key succeeds without throwing
+        try await store.delete(key: "non_existent_key")
+    }
+
+    func testKeychainPurgeAll() async throws {
+        let store = KeychainStore(serviceName: "com.hawk.test.purge", inMemoryOnly: true)
+        try await store.saveString(key: "k1", value: "v1")
+        try await store.saveString(key: "k2", value: "v2")
+
+        try await store.purgeAll()
+
+        let v1 = try await store.readString(key: "k1")
+        let v2 = try await store.readString(key: "k2")
+        XCTAssertNil(v1)
+        XCTAssertNil(v2)
+    }
 }

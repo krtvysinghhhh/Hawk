@@ -58,9 +58,9 @@ With 207 automated tests (29 SwiftPM XCTest cases + 178 verification harness tes
 
 | Suite | Executed | Passed | Failed | Skipped | Status |
 |:---|:---:|:---:|:---:|:---:|:---:|
-| **SwiftPM XCTest Suite** | 29 | 29 | 0 | 0 | **100% Pass** |
+| **SwiftPM XCTest Suite** | 41 | 41 | 0 | 0 | **100% Pass** |
 | **HawkVerify Harness** | 178 | 177 | 0 | 1 | **100% Pass** (1 HW skipped) |
-| **Total Automated Assertions** | **207** | **206** | **0** | **1** | **VERIFIED** |
+| **Total Automated Assertions** | **219** | **218** | **0** | **1** | **VERIFIED** |
 | **Xcode Release Build** | — | — | 0 Errors | 0 Warnings | **BUILD SUCCEEDED** |
 
 *Note: The single skipped test in `HawkVerify` is `hardwareConfig`, which requires a physical iOS audio hardware route (`AVAudioSession.isInputAvailable`) unavailable in macOS Darwin terminal environments.*

@@ -109,7 +109,7 @@ public actor DownloadManager {
 
             await self.updateState(songId: song.id, state: .downloading(progress: 0.25))
 
-            let safeId = song.id.replacingOccurrences(of: "..", with: "").components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+            let safeId = song.id.replacingOccurrences(of: "..", with: "").components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: "_")
             let fileExtension = stream.url.pathExtension.isEmpty ? "m4a" : stream.url.pathExtension
             let destinationURL = self.downloadsDirectory.appendingPathComponent("\(safeId).\(fileExtension)")
 

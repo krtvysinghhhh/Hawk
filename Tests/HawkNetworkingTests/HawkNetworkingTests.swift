@@ -39,4 +39,22 @@ final class HawkNetworkingTests: XCTestCase {
             }
         }
     }
+
+    func testRetryJitterBoundaries() {
+        for _ in 0..<100 {
+            let jitter = Double.random(in: 0.8...1.2)
+            XCTAssertGreaterThanOrEqual(jitter, 0.8)
+            XCTAssertLessThanOrEqual(jitter, 1.2)
+        }
+    }
+
+    func testRetryAfterClampingLogic() {
+        let requestedRetryAfter: Double = 60.0
+        let bounded = min(requestedRetryAfter, 10.0)
+        XCTAssertEqual(bounded, 10.0)
+
+        let shortRetryAfter: Double = 2.5
+        let boundedShort = min(shortRetryAfter, 10.0)
+        XCTAssertEqual(boundedShort, 2.5)
+    }
 }

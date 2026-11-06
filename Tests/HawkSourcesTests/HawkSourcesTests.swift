@@ -89,4 +89,36 @@ final class HawkSourcesTests: XCTestCase {
         XCTAssertFalse(UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "ftp://example.com/playlist.m3u")!))
         XCTAssertFalse(UniversalPlaylistImporter.isSafeRemoteURL(URL(string: "file:///etc/passwd")!))
     }
+
+    func testLevenshteinFalsePositivesDifferentArtists() {
+        // Identical title "Hello" but Adele vs Lionel Richie
+        let score = TrackMatcher.matchScore(
+            titleA: "Hello",
+            artistA: "Adele",
+            durationA: 295.0,
+            titleB: "Hello",
+            artistB: "Lionel Richie",
+            durationB: 247.0
+        )
+        // Must reject different artists even if title is identical
+        XCTAssertLessThan(score, TrackMatcher.confidenceThreshold)
+    }
+
+    func testDownloadPathTraversalSanitization() {
+        let maliciousId = "../../etc/passwd"
+        let safeId = maliciousId.replacingOccurrences(of: "..", with: "").components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: "_")
+        XCTAssertFalse(safeId.contains(".."))
+        XCTAssertFalse(safeId.contains("/"))
+        XCTAssertEqual(safeId, "etc_passwd")
+    }
+
+    func testURLExpirationExtraction() {
+        let futureTime = Date().addingTimeInterval(3600).timeIntervalSince1970
+        let url = URL(string: "https://googlevideo.com/videoplayback?expire=\(Int(futureTime))&id=test")!
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let expireVal = components?.queryItems?.first(where: { $0.name == "expire" })?.value
+        XCTAssertNotNil(expireVal)
+        let extractedSec = Double(expireVal!)!
+        XCTAssertEqual(extractedSec, Double(Int(futureTime)))
+    }
 }

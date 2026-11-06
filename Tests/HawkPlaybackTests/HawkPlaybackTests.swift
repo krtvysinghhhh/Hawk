@@ -68,4 +68,32 @@ final class HawkPlaybackTests: XCTestCase {
         let pausedState = await engine.playbackState
         XCTAssertFalse(pausedState.isPlaying)
     }
+
+    func testStopResetsPlaybackStateToIdleAndClearsPlayers() async {
+        let engine = HawkAudioEngine()
+        await engine.stop()
+        let state = await engine.playbackState
+        XCTAssertEqual(state, .idle)
+        let standbyItem = await engine.standbyPlayerItem
+        XCTAssertNil(standbyItem)
+        let isStandbyPlaying = await engine.isStandbyPlaying
+        XCTAssertFalse(isStandbyPlaying)
+    }
+
+    func testPauseStopsStandbyPlayer() async {
+        let engine = HawkAudioEngine()
+        await engine.pause()
+        let isStandbyPlaying = await engine.isStandbyPlaying
+        XCTAssertFalse(isStandbyPlaying)
+    }
+
+    func testMonotonicPlayRequestIdIncrements() async {
+        let engine = HawkAudioEngine()
+        let initialId = await engine.activePlayRequestId
+        let song1 = Song(id: "s1", title: "Song 1", artist: "Artist 1")
+        // Invoking play on invalid media will reject/fail but advance request ID
+        try? await engine.play(song: song1)
+        let nextId = await engine.activePlayRequestId
+        XCTAssertGreaterThan(nextId, initialId)
+    }
 }

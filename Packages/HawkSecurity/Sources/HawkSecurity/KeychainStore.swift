@@ -104,6 +104,23 @@ public actor KeychainStore {
         }
     }
 
+    /// Removes all items for this service from the Keychain.
+    public func purgeAll() throws {
+        if isInMemoryOnly {
+            inMemoryStorage.removeAll()
+            return
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw HawkError.keychainError("SecItemDelete (purgeAll) failed with OSStatus: \(status)")
+        }
+    }
+
     // MARK: - Convenience String Helpers
     public func saveString(key: String, value: String) throws {
         guard let data = value.data(using: .utf8) else {

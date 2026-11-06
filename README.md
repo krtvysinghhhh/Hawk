@@ -13,7 +13,7 @@
   <a href="https://apple.com"><img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B-blue.svg" alt="Platform iOS 17.0+" /></a>
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange.svg" alt="Swift 6.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-green.svg" alt="License GPLv3" /></a>
-  <a href="TEST_REPORT.md"><img src="https://img.shields.io/badge/Tests-207%20Automated-brightgreen.svg" alt="207 Tests Automated" /></a>
+  <a href="FINAL_TEST_VERIFICATION.md"><img src="https://img.shields.io/badge/Tests-218%20Passing-brightgreen.svg" alt="218 Tests Passing" /></a>
   <a href="RELEASE_NOTES_v1.5.0.md"><img src="https://img.shields.io/badge/Release-v1.5.0-coral.svg" alt="Release v1.5.0" /></a>
 </p>
 
@@ -134,13 +134,13 @@ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ### 2. Verify Swift Packages & Test Suite
 Run the SwiftPM native XCTest targets and the automated verification harness:
 ```bash
-# Run unit & integration tests (29 tests)
+# Run unit & integration tests (41 tests)
 swift test
 
 # Run verification harness (178 checks)
 swift run HawkVerify
 ```
-Expected output: **207 automated tests passing (29 XCTest passed, 177 harness passed, 1 hardware check safely skipped on macOS CLI)**.
+Expected output: **218 automated tests passing (41 XCTest passed, 177 harness passed, 1 hardware check safely skipped on macOS CLI)**.
 
 ### 3. Generate Xcode Project & Build IPA
 ```bash
