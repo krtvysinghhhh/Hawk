@@ -110,6 +110,19 @@ final class HawkSourcesTests: XCTestCase {
         XCTAssertFalse(safeId.contains(".."))
         XCTAssertFalse(safeId.contains("/"))
         XCTAssertEqual(safeId, "etc_passwd")
+
+        // Test helper with traversal attack
+        let filename1 = DownloadManager.sanitizeDownloadFilename(songId: maliciousId, streamURL: URL(string: "https://example.com/audio.mp3")!)
+        XCTAssertEqual(filename1, "etc_passwd.mp3")
+
+        // Test helper with non-alphanumeric fallback (no hidden dotfiles)
+        let filename2 = DownloadManager.sanitizeDownloadFilename(songId: "???///###", streamURL: URL(string: "https://example.com/stream?codec=aac")!)
+        XCTAssertFalse(filename2.hasPrefix("."))
+        XCTAssertTrue(filename2.hasSuffix(".m4a"))
+
+        // Test helper with extension whitelist enforcement
+        let filename3 = DownloadManager.sanitizeDownloadFilename(songId: "track1", streamURL: URL(string: "https://example.com/exploit.sh")!)
+        XCTAssertEqual(filename3, "track1.m4a")
     }
 
     func testURLExpirationExtraction() {

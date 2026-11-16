@@ -636,6 +636,8 @@ func runAllVerifications() async {
     assertTest(.integration, "DownloadManager isDownloaded false for non-existent", notDL == false)
     let idleState = await downloadManager.getState(songId: "non_existent")
     assertTest(.integration, "DownloadManager returns .idle for non-existent", idleState == .idle)
+    let sanitizedDL = DownloadManager.sanitizeDownloadFilename(songId: "../../etc/passwd", streamURL: URL(string: "https://example.com/audio.mp3")!)
+    assertTest(.integration, "DownloadManager sanitizes path traversal & forces valid audio extension", sanitizedDL == "etc_passwd.mp3")
 
     // Wall-clock Listening Stats History Integration
     let statsDir = FileManager.default.temporaryDirectory.appendingPathComponent("HawkVerifyStats_\(UUID().uuidString)")

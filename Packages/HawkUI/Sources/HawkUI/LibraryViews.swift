@@ -666,7 +666,9 @@ public struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.4.0 (Build 6)")
+                        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.5.0"
+                        let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "7"
+                        Text("\(appVersion) (Build \(buildNumber))")
                             .foregroundColor(HawkTheme.textSecondary)
                     }
 
