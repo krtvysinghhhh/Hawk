@@ -1,4 +1,5 @@
 import XCTest
+import Security
 @testable import HawkSources
 @testable import HawkCore
 
@@ -135,23 +136,83 @@ final class HawkSourcesTests: XCTestCase {
         XCTAssertEqual(extractedSec, Double(Int(futureTime)))
     }
 
-    // MARK: - Google OAuth & OIDC Authentication Tests
+    // MARK: - Google OAuth & Cryptographic OIDC Authentication Tests
 
-    private func createMockIdToken(
+    private static let testRsaKeyId = "hawk-test-key-2026"
+    private static let (testPrivateKey, testPublicKey): (SendableSecKey, SendableSecKey) = {
+        let attrs: [CFString: Any] = [
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits: 2048
+        ]
+        var err: Unmanaged<CFError>?
+        let priv = SecKeyCreateRandomKey(attrs as CFDictionary, &err)!
+        let pub = SecKeyCopyPublicKey(priv)!
+        return (SendableSecKey(priv), SendableSecKey(pub))
+    }()
+
+    private static func testKeyResolver(kid: String) async throws -> SendableSecKey? {
+        if kid == Self.testRsaKeyId {
+            return Self.testPublicKey
+        }
+        return nil
+    }
+
+    private func createSignedTestIdToken(
+        keyId: String? = testRsaKeyId,
+        alg: String = "RS256",
         issuer: String = "https://accounts.google.com",
         audience: String = "862376793952-test.apps.googleusercontent.com",
         subject: String = "123456789",
-        email: String = "tester@gmail.com",
-        expiration: TimeInterval = Date().addingTimeInterval(3600).timeIntervalSince1970
+        email: String? = "tester@gmail.com",
+        nonce: String? = nil,
+        expiration: TimeInterval = Date().addingTimeInterval(3600).timeIntervalSince1970,
+        issuedAt: TimeInterval = Date().timeIntervalSince1970,
+        signWithKey: SecKey? = nil,
+        corruptSignature: Bool = false
     ) -> String {
-        let header = "{\"alg\":\"RS256\",\"typ\":\"JWT\"}".data(using: .utf8)!.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        let payloadJson = "{\"iss\":\"\(issuer)\",\"aud\":\"\(audience)\",\"sub\":\"\(subject)\",\"email\":\"\(email)\",\"exp\":\(Int(expiration)),\"iat\":1700000000}"
-        let payload = payloadJson.data(using: .utf8)!.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        let signature = "mock_signature_bytes".data(using: .utf8)!.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        return "\(header).\(payload).\(signature)"
+        let activeKey = signWithKey ?? Self.testPrivateKey.rawKey
+        var headerDict: [String: Any] = ["alg": alg, "typ": "JWT"]
+        if let kid = keyId {
+            headerDict["kid"] = kid
+        }
+        let headerData = try! JSONSerialization.data(withJSONObject: headerDict)
+        let headerB64 = GoogleMusicSyncManager.base64UrlEncode(headerData)
+
+        var payloadDict: [String: Any] = [
+            "iss": issuer,
+            "aud": audience,
+            "sub": subject,
+            "exp": expiration,
+            "iat": issuedAt
+        ]
+        if let email = email {
+            payloadDict["email"] = email
+            payloadDict["email_verified"] = true
+        }
+        if let nonce = nonce {
+            payloadDict["nonce"] = nonce
+        }
+        let payloadData = try! JSONSerialization.data(withJSONObject: payloadDict)
+        let payloadB64 = GoogleMusicSyncManager.base64UrlEncode(payloadData)
+
+        let signingInput = "\(headerB64).\(payloadB64)".data(using: .ascii)!
+
+        let signatureB64: String
+        if alg == "RS256" {
+            var err: Unmanaged<CFError>?
+            let sigData = SecKeyCreateSignature(activeKey, .rsaSignatureMessagePKCS1v15SHA256, signingInput as CFData, &err)! as Data
+            if corruptSignature {
+                var corrupted = sigData
+                corrupted[0] ^= 0xFF
+                signatureB64 = GoogleMusicSyncManager.base64UrlEncode(corrupted)
+            } else {
+                signatureB64 = GoogleMusicSyncManager.base64UrlEncode(sigData)
+            }
+        } else {
+            signatureB64 = GoogleMusicSyncManager.base64UrlEncode("mock_dummy_signature".data(using: .utf8)!)
+        }
+
+        return "\(headerB64).\(payloadB64).\(signatureB64)"
     }
 
     @MainActor
@@ -219,10 +280,15 @@ final class HawkSourcesTests: XCTestCase {
         XCTAssertTrue(GoogleMusicSyncManager.mapOAuthError(code: "unauthorized_client").contains("unauthorized"))
     }
 
-    func testIdTokenValidationSuccess() {
+    func testIdTokenValidationSuccess() async {
         let audience = "862376793952-test.apps.googleusercontent.com"
-        let token = createMockIdToken(audience: audience, email: "developer@example.com")
-        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: audience)
+        let token = createSignedTestIdToken(audience: audience, email: "developer@example.com", nonce: "test_nonce_123")
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            expectedNonce: "test_nonce_123",
+            customKeyResolver: Self.testKeyResolver
+        )
 
         switch result {
         case .success(let claims):
@@ -230,15 +296,120 @@ final class HawkSourcesTests: XCTestCase {
             XCTAssertEqual(claims.audience, audience)
             XCTAssertEqual(claims.subject, "123456789")
             XCTAssertEqual(claims.email, "developer@example.com")
+            XCTAssertTrue(claims.emailVerified)
+            XCTAssertEqual(claims.nonce, "test_nonce_123")
             XCTAssertGreaterThan(claims.expiration, Date())
         case .failure(let err):
             XCTFail("ID token validation failed unexpectedly: \(err)")
         }
     }
 
-    func testIdTokenValidationAudienceMismatch() {
-        let token = createMockIdToken(audience: "attacker_client_id.apps.googleusercontent.com")
-        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: "legitimate_client_id.apps.googleusercontent.com")
+    func testIdTokenValidationInvalidSignature() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(audience: audience, corruptSignature: true)
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+
+        guard case .failure(let err) = result, case .invalidSignature = err else {
+            XCTFail("Expected .invalidSignature error, got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationAlteredPayload() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(audience: audience, email: "legit@example.com")
+        let parts = token.components(separatedBy: ".")
+        XCTAssertEqual(parts.count, 3)
+
+        // Attacker alters payload claim
+        let tamperedPayload = GoogleMusicSyncManager.base64UrlEncode(
+            "{\"iss\":\"https://accounts.google.com\",\"aud\":\"\(audience)\",\"sub\":\"123456789\",\"email\":\"attacker@evil.com\",\"exp\":\(Date().addingTimeInterval(3600).timeIntervalSince1970),\"iat\":\(Date().timeIntervalSince1970)}".data(using: .utf8)!
+        )
+        let tamperedToken = "\(parts[0]).\(tamperedPayload).\(parts[2])"
+
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: tamperedToken,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+
+        guard case .failure(let err) = result, case .invalidSignature = err else {
+            XCTFail("Expected .invalidSignature for altered payload, got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationUnknownKeyId() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(keyId: "unknown-kid-999", audience: audience)
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+
+        guard case .failure(let err) = result, case .unknownSigningKey(let kid) = err, kid == "unknown-kid-999" else {
+            XCTFail("Expected .unknownSigningKey('unknown-kid-999'), got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationMissingKeyId() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(keyId: nil, audience: audience)
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+
+        guard case .failure(let err) = result, case .missingKeyId = err else {
+            XCTFail("Expected .missingKeyId, got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationAlgorithmNoneRejected() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(alg: "none", audience: audience)
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+
+        guard case .failure(let err) = result, case .algorithmNoneRejected = err else {
+            XCTFail("Expected .algorithmNoneRejected, got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationUnsupportedAlgorithm() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(alg: "HS256", audience: audience)
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+
+        guard case .failure(let err) = result, case .unsupportedAlgorithm(let alg) = err, alg == "HS256" else {
+            XCTFail("Expected .unsupportedAlgorithm('HS256'), got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationAudienceMismatch() async {
+        let token = createSignedTestIdToken(audience: "attacker_client_id.apps.googleusercontent.com")
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: "legitimate_client_id.apps.googleusercontent.com",
+            customKeyResolver: Self.testKeyResolver
+        )
 
         guard case .failure(let err) = result, case .audienceMismatch = err else {
             XCTFail("Expected audienceMismatch error, got: \(result)")
@@ -246,10 +417,14 @@ final class HawkSourcesTests: XCTestCase {
         }
     }
 
-    func testIdTokenValidationInvalidIssuer() {
+    func testIdTokenValidationInvalidIssuer() async {
         let audience = "862376793952-test.apps.googleusercontent.com"
-        let token = createMockIdToken(issuer: "https://evil-auth.com", audience: audience)
-        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: audience)
+        let token = createSignedTestIdToken(issuer: "https://evil-auth.com", audience: audience)
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
 
         guard case .failure(let err) = result, case .invalidIssuer = err else {
             XCTFail("Expected invalidIssuer error, got: \(result)")
@@ -257,16 +432,66 @@ final class HawkSourcesTests: XCTestCase {
         }
     }
 
-    func testIdTokenValidationExpired() {
+    func testIdTokenValidationExpired() async {
         let audience = "862376793952-test.apps.googleusercontent.com"
         let pastExp = Date().addingTimeInterval(-300).timeIntervalSince1970
-        let token = createMockIdToken(audience: audience, expiration: pastExp)
-        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: audience)
+        let token = createSignedTestIdToken(audience: audience, expiration: pastExp)
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
 
         guard case .failure(let err) = result, case .tokenExpired = err else {
             XCTFail("Expected tokenExpired error, got: \(result)")
             return
         }
+    }
+
+    func testIdTokenValidationNonceMismatch() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(audience: audience, nonce: "token_nonce_123")
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            expectedNonce: "expected_nonce_456",
+            customKeyResolver: Self.testKeyResolver
+        )
+
+        guard case .failure(let err) = result, case .nonceMismatch(let expected, let actual) = err else {
+            XCTFail("Expected nonceMismatch error, got: \(result)")
+            return
+        }
+        XCTAssertEqual(expected, "expected_nonce_456")
+        XCTAssertEqual(actual, "token_nonce_123")
+    }
+
+    func testJwksDerPublicKeyParsingAndVerification() throws {
+        // Export test public key bytes
+        var error: Unmanaged<CFError>?
+        guard let pubData = SecKeyCopyExternalRepresentation(Self.testPublicKey.rawKey, &error) as Data? else {
+            XCTFail("Failed to export public key representation")
+            return
+        }
+        // In PKCS#1 DER format:
+        // Tag 0x30 [len] Tag 0x02 [len] [modulus] Tag 0x02 [len] [exponent]
+        // Modulus starts after seq header (4 bytes) and int header (4 bytes + 1 byte for 0x00) -> 256 bytes
+        let modulus = pubData.subdata(in: 9..<9+256)
+        let exponent = pubData.suffix(3)
+
+        guard let reconstructed = GoogleJwksService.createRsaPublicKey(modulus: modulus, exponent: exponent) else {
+            XCTFail("Failed to reconstruct RSA SecKey from modulus and exponent")
+            return
+        }
+
+        let message = "testing DER parsing".data(using: .utf8)!
+        guard let sig = SecKeyCreateSignature(Self.testPrivateKey.rawKey, .rsaSignatureMessagePKCS1v15SHA256, message as CFData, &error) as Data? else {
+            XCTFail("Failed to sign message")
+            return
+        }
+
+        let verified = SecKeyVerifySignature(reconstructed, .rsaSignatureMessagePKCS1v15SHA256, message as CFData, sig as CFData, &error)
+        XCTAssertTrue(verified)
     }
 
     @MainActor

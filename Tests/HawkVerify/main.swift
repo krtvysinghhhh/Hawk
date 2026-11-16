@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import AVFoundation
 import SwiftUI
 import HawkCore
@@ -416,16 +417,66 @@ func runAllVerifications() async {
     let accessDeniedTestingMsg = GoogleMusicSyncManager.mapOAuthError(code: "access_denied", description: testingDesc)
     assertTest(.unit, "OAuth error mapping for testing-mode 403 access_denied directs to GCP Test Users", accessDeniedTestingMsg.contains("Test users") && accessDeniedTestingMsg.contains("403: access_denied"))
 
-    // Test OIDC ID Token validation
-    let validAudience = "862376793952-test.apps.googleusercontent.com"
-    let mockHeader = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
-    let mockPayload = "eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhdWQiOiI4NjIzNzY3OTM5NTItdGVzdC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsInN1YiI6IjEyMzQ1Njc4OSIsImVtYWlsIjoidGVzdGVyQGdtYWlsLmNvbSIsImV4cCI6MjUwMDAwMDAwMCwiaWF0IjoxNzAwMDAwMDAwfQ"
-    let mockIdToken = "\(mockHeader).\(mockPayload).mock_sig"
-    let idTokenValidation = GoogleMusicSyncManager.validateIdToken(rawToken: mockIdToken, expectedAudience: validAudience)
-    let idTokenPass = if case .success(let claims) = idTokenValidation { claims.email == "tester@gmail.com" } else { false }
-    assertTest(.unit, "OIDC ID token validator extracts claims and validates Google issuer and audience", idTokenPass)
+    // Test Cryptographic OIDC ID Token validation
+    let rsaAttrs: [CFString: Any] = [
+        kSecAttrKeyType: kSecAttrKeyTypeRSA,
+        kSecAttrKeySizeInBits: 2048
+    ]
+    var rsaErr: Unmanaged<CFError>?
+    let verifyPrivKey = SecKeyCreateRandomKey(rsaAttrs as CFDictionary, &rsaErr)!
+    let verifyPubKey = SecKeyCopyPublicKey(verifyPrivKey)!
+    let sendablePubKey = SendableSecKey(verifyPubKey)
 
-    let mismatchValidation = GoogleMusicSyncManager.validateIdToken(rawToken: mockIdToken, expectedAudience: "wrong_audience")
+    let validAudience = "862376793952-test.apps.googleusercontent.com"
+    let headerJson = "{\"alg\":\"RS256\",\"kid\":\"verify-key-1\",\"typ\":\"JWT\"}".data(using: .utf8)!
+    let headerB64 = GoogleMusicSyncManager.base64UrlEncode(headerJson)
+    let payloadJson = "{\"iss\":\"https://accounts.google.com\",\"aud\":\"\(validAudience)\",\"sub\":\"123456789\",\"email\":\"tester@gmail.com\",\"email_verified\":true,\"nonce\":\"verify_nonce_123\",\"exp\":2500000000,\"iat\":1700000000}".data(using: .utf8)!
+    let payloadB64 = GoogleMusicSyncManager.base64UrlEncode(payloadJson)
+    let signInput = "\(headerB64).\(payloadB64)".data(using: .ascii)!
+    let sigData = SecKeyCreateSignature(verifyPrivKey, .rsaSignatureMessagePKCS1v15SHA256, signInput as CFData, &rsaErr)! as Data
+    let sigB64 = GoogleMusicSyncManager.base64UrlEncode(sigData)
+    let validSignedJwt = "\(headerB64).\(payloadB64).\(sigB64)"
+
+    let keyResolver: @Sendable (String) async throws -> SendableSecKey? = { kid in
+        kid == "verify-key-1" ? sendablePubKey : nil
+    }
+
+    let idTokenValidation = await GoogleMusicSyncManager.validateIdToken(
+        rawToken: validSignedJwt,
+        expectedAudience: validAudience,
+        expectedNonce: "verify_nonce_123",
+        customKeyResolver: keyResolver
+    )
+    let idTokenPass = if case .success(let claims) = idTokenValidation { claims.email == "tester@gmail.com" && claims.nonce == "verify_nonce_123" } else { false }
+    assertTest(.unit, "OIDC ID token validator verifies RS256 signature and extracts validated claims", idTokenPass)
+
+    // Altered payload test (signature tampering detection)
+    let tamperedPayloadB64 = GoogleMusicSyncManager.base64UrlEncode("{\"iss\":\"https://accounts.google.com\",\"aud\":\"\(validAudience)\",\"sub\":\"123456789\",\"email\":\"hacker@evil.com\",\"exp\":2500000000,\"iat\":1700000000}".data(using: .utf8)!)
+    let tamperedJwt = "\(headerB64).\(tamperedPayloadB64).\(sigB64)"
+    let tamperedValidation = await GoogleMusicSyncManager.validateIdToken(
+        rawToken: tamperedJwt,
+        expectedAudience: validAudience,
+        customKeyResolver: keyResolver
+    )
+    let tamperedPass = if case .failure(let err) = tamperedValidation, case .invalidSignature = err { true } else { false }
+    assertTest(.unit, "OIDC ID token validator cryptographically rejects altered payload (invalid signature)", tamperedPass)
+
+    // alg=none rejection test
+    let noneHeaderB64 = GoogleMusicSyncManager.base64UrlEncode("{\"alg\":\"none\",\"kid\":\"verify-key-1\",\"typ\":\"JWT\"}".data(using: .utf8)!)
+    let noneJwt = "\(noneHeaderB64).\(payloadB64).\(sigB64)"
+    let noneValidation = await GoogleMusicSyncManager.validateIdToken(
+        rawToken: noneJwt,
+        expectedAudience: validAudience,
+        customKeyResolver: keyResolver
+    )
+    let nonePass = if case .failure(let err) = noneValidation, case .algorithmNoneRejected = err { true } else { false }
+    assertTest(.unit, "OIDC ID token validator strictly rejects alg=none (unsigned token attack)", nonePass)
+
+    let mismatchValidation = await GoogleMusicSyncManager.validateIdToken(
+        rawToken: validSignedJwt,
+        expectedAudience: "wrong_audience",
+        customKeyResolver: keyResolver
+    )
     let mismatchPass = if case .failure(let err) = mismatchValidation, case .audienceMismatch = err { true } else { false }
     assertTest(.unit, "OIDC ID token validator rejects audience mismatch", mismatchPass)
 

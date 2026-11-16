@@ -234,14 +234,27 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         public let audience: String
         public let subject: String
         public let email: String?
+        public let emailVerified: Bool
+        public let nonce: String?
         public let expiration: Date
         public let issuedAt: Date
 
-        public init(issuer: String, audience: String, subject: String, email: String?, expiration: Date, issuedAt: Date) {
+        public init(
+            issuer: String,
+            audience: String,
+            subject: String,
+            email: String?,
+            emailVerified: Bool = false,
+            nonce: String? = nil,
+            expiration: Date,
+            issuedAt: Date
+        ) {
             self.issuer = issuer
             self.audience = audience
             self.subject = subject
             self.email = email
+            self.emailVerified = emailVerified
+            self.nonce = nonce
             self.expiration = expiration
             self.issuedAt = issuedAt
         }
@@ -249,44 +262,149 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     public enum IdTokenValidationError: Error, CustomStringConvertible, Sendable, Equatable {
         case malformedJwt
-        case invalidBase64
-        case invalidJson
+        case invalidBase64(String)
+        case invalidJson(String)
+        case missingKeyId
+        case unknownSigningKey(String)
+        case unsupportedAlgorithm(String)
+        case algorithmNoneRejected
+        case invalidSignature
         case invalidIssuer(String)
         case audienceMismatch(expected: String, actual: String)
         case tokenExpired(expiration: Date, now: Date)
+        case tokenIssuedInFuture(issuedAt: Date, now: Date)
         case missingSubject
+        case nonceMismatch(expected: String, actual: String?)
+        case networkError(String)
+        case invalidPublicKeyData
 
         public var description: String {
             switch self {
             case .malformedJwt:
                 return "ID token does not have 3 segments (header.payload.signature)."
-            case .invalidBase64:
-                return "Failed to decode base64url payload in ID token."
-            case .invalidJson:
-                return "ID token payload is not valid JSON."
+            case .invalidBase64(let part):
+                return "Failed to decode base64url \(part) in ID token."
+            case .invalidJson(let part):
+                return "ID token \(part) is not valid JSON."
+            case .missingKeyId:
+                return "ID token header is missing required 'kid' (Key ID)."
+            case .unknownSigningKey(let kid):
+                return "Signing key '\(kid)' not found in Google JWKS."
+            case .unsupportedAlgorithm(let alg):
+                return "Unsupported JWT signing algorithm: '\(alg)'. Expected 'RS256'."
+            case .algorithmNoneRejected:
+                return "CRITICAL: JWT 'alg=none' rejected. Unsigned tokens are strictly prohibited."
+            case .invalidSignature:
+                return "CRITICAL: JWT RSA signature verification failed. Token is invalid or has been tampered with."
             case .invalidIssuer(let iss):
                 return "Invalid ID token issuer: '\(iss)'. Expected 'accounts.google.com'."
             case .audienceMismatch(let expected, let actual):
                 return "ID token audience mismatch: expected '\(expected)', got '\(actual)'."
             case .tokenExpired(let exp, let now):
                 return "ID token has expired (exp: \(exp), now: \(now))."
+            case .tokenIssuedInFuture(let iat, let now):
+                return "ID token issued in the future (iat: \(iat), now: \(now))."
             case .missingSubject:
                 return "ID token missing 'sub' claim."
+            case .nonceMismatch(let expected, let actual):
+                return "ID token nonce mismatch: expected '\(expected)', got '\(actual ?? "nil")'."
+            case .networkError(let msg):
+                return "Network error while resolving Google JWKS: \(msg)"
+            case .invalidPublicKeyData:
+                return "Failed to construct valid RSA public key from JWKS."
             }
         }
     }
 
-    /// Validates OIDC ID token structure, issuer, audience, and expiration.
-    nonisolated public static func validateIdToken(rawToken: String, expectedAudience: String, now: Date = Date()) -> Result<IdTokenClaims, IdTokenValidationError> {
+    /// Cryptographically validates OIDC ID token signature against Google's JWKS and verifies claims.
+    ///
+    /// Critical security invariants:
+    /// 1. Enforces 3-part JWT structure.
+    /// 2. Header algorithm MUST be 'RS256'; explicitly rejects 'none' and algorithm confusion.
+    /// 3. Resolves signing key from Google's JWKS endpoint with automated rotation and safe caching.
+    /// 4. Cryptographically verifies RS256 signature over ASCII(header + "." + payload) using Apple Security framework.
+    /// 5. Validates signature BEFORE trusting or evaluating any claims.
+    /// 6. Validates issuer, audience, subject, expiration, issued-at, and nonce.
+    /// 7. Never trusts or extracts email claims from an unverified token.
+    nonisolated public static func validateIdToken(
+        rawToken: String,
+        expectedAudience: String,
+        expectedNonce: String? = nil,
+        now: Date = Date(),
+        jwksService: GoogleJwksService = GoogleJwksService.shared,
+        customKeyResolver: (@Sendable (String) async throws -> SendableSecKey?)? = nil
+    ) async -> Result<IdTokenClaims, IdTokenValidationError> {
         let parts = rawToken.components(separatedBy: ".")
         guard parts.count == 3 else {
             return .failure(.malformedJwt)
         }
-        guard let payloadData = base64UrlDecode(parts[1]) else {
-            return .failure(.invalidBase64)
+
+        // 1. Decode & validate Header
+        guard let headerData = base64UrlDecode(parts[0]),
+              let headerJson = try? JSONSerialization.jsonObject(with: headerData) as? [String: Any] else {
+            return .failure(.invalidBase64("header"))
         }
-        guard let json = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
-            return .failure(.invalidJson)
+
+        guard let rawAlg = headerJson["alg"] as? String else {
+            return .failure(.unsupportedAlgorithm("missing"))
+        }
+        let alg = rawAlg.trimmingCharacters(in: .whitespacesAndNewlines)
+        if alg.lowercased() == "none" {
+            return .failure(.algorithmNoneRejected)
+        }
+        guard alg == "RS256" else {
+            return .failure(.unsupportedAlgorithm(alg))
+        }
+
+        guard let kid = headerJson["kid"] as? String, !kid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(.missingKeyId)
+        }
+
+        // 2. Resolve Public Key from JWKS
+        let publicKey: SecKey
+        do {
+            if let customResolver = customKeyResolver {
+                guard let sendableKey = try await customResolver(kid) else {
+                    return .failure(.unknownSigningKey(kid))
+                }
+                publicKey = sendableKey.rawKey
+            } else {
+                let sendableKey = try await jwksService.getKey(for: kid)
+                publicKey = sendableKey.rawKey
+            }
+        } catch let valErr as IdTokenValidationError {
+            return .failure(valErr)
+        } catch {
+            return .failure(.networkError(error.localizedDescription))
+        }
+
+        // 3. Decode Signature
+        guard let signatureData = base64UrlDecode(parts[2]), !signatureData.isEmpty else {
+            return .failure(.invalidSignature)
+        }
+
+        // 4. CRYPTOGRAPHICALLY VERIFY SIGNATURE BEFORE TRUSTING ANY CLAIMS
+        guard let signedData = "\(parts[0]).\(parts[1])".data(using: .ascii) else {
+            return .failure(.malformedJwt)
+        }
+
+        var secError: Unmanaged<CFError>?
+        let isSignatureValid = SecKeyVerifySignature(
+            publicKey,
+            .rsaSignatureMessagePKCS1v15SHA256,
+            signedData as CFData,
+            signatureData as CFData,
+            &secError
+        )
+
+        guard isSignatureValid else {
+            return .failure(.invalidSignature)
+        }
+
+        // 5. PARSE & VALIDATE CLAIMS (ONLY REACHED AFTER CRYPTOGRAPHIC SIGNATURE VERIFICATION)
+        guard let payloadData = base64UrlDecode(parts[1]),
+              let json = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            return .failure(.invalidJson("payload"))
         }
 
         guard let iss = json["iss"] as? String, (iss == "https://accounts.google.com" || iss == "accounts.google.com") else {
@@ -303,22 +421,44 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
         let expSec = (json["exp"] as? Double) ?? 0
         let expDate = Date(timeIntervalSince1970: expSec)
-        if expDate <= now {
+        if expDate.addingTimeInterval(60) <= now {
             return .failure(.tokenExpired(expiration: expDate, now: now))
         }
 
         let iatSec = (json["iat"] as? Double) ?? 0
         let iatDate = Date(timeIntervalSince1970: iatSec)
+        if iatDate > now.addingTimeInterval(300) {
+            return .failure(.tokenIssuedInFuture(issuedAt: iatDate, now: now))
+        }
+
+        if let expectedNonce = expectedNonce {
+            let tokenNonce = json["nonce"] as? String
+            guard let tokenNonce = tokenNonce, tokenNonce == expectedNonce else {
+                return .failure(.nonceMismatch(expected: expectedNonce, actual: tokenNonce))
+            }
+        }
+
         let email = json["email"] as? String
+        let emailVerified = json["email_verified"] as? Bool ?? false
+        let nonce = json["nonce"] as? String
 
         return .success(IdTokenClaims(
             issuer: iss,
             audience: aud,
             subject: sub,
             email: email,
+            emailVerified: emailVerified,
+            nonce: nonce,
             expiration: expDate,
             issuedAt: iatDate
         ))
+    }
+
+    nonisolated public static func base64UrlEncode(_ data: Data) -> String {
+        return data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     nonisolated public static func base64UrlDecode(_ string: String) -> Data? {
@@ -442,6 +582,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let challenge = Self.generateCodeChallenge(from: verifier)
         // Cryptographic state parameter to prevent CSRF / session fixation
         let stateToken = Self.generateStateToken()
+        // Cryptographic nonce parameter to prevent token replay attacks (OIDC Core 1.0)
+        let nonceToken = Self.generateNonce()
 
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         components.queryItems = [
@@ -452,6 +594,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: stateToken),
+            URLQueryItem(name: "nonce", value: nonceToken),
             URLQueryItem(name: "prompt", value: "select_account")
         ]
 
@@ -496,6 +639,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                             try await self.exchangeCodeForTokens(
                                 code: code,
                                 verifier: verifier,
+                                nonce: nonceToken,
                                 clientId: activeClientId,
                                 redirectUri: activeRedirectUri
                             )
@@ -645,6 +789,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     private func exchangeCodeForTokens(
         code: String,
         verifier: String,
+        nonce: String? = nil,
         clientId: String? = nil,
         redirectUri: String? = nil
     ) async throws {
@@ -695,19 +840,24 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let expiresIn = json["expires_in"] as? Double ?? 3600
         var resolvedEmail = "Google User"
 
-        // 1. Prefer authenticated user email from validated OIDC ID token
+        // 1. Prefer authenticated user email from cryptographically verified OIDC ID token
         if let idToken = json["id_token"] as? String {
-            switch Self.validateIdToken(rawToken: idToken, expectedAudience: activeClientId) {
+            let validationResult = await Self.validateIdToken(
+                rawToken: idToken,
+                expectedAudience: activeClientId,
+                expectedNonce: nonce
+            )
+            switch validationResult {
             case .success(let claims):
                 if let tokenEmail = claims.email, !tokenEmail.isEmpty {
                     resolvedEmail = tokenEmail
                 }
             case .failure(let valErr):
-                print("[GoogleOAuth] OIDC ID token claim verification notice: \(valErr.description)")
+                print("[GoogleOAuth] Cryptographic OIDC ID token verification rejected: \(valErr.description)")
             }
         }
 
-        // 2. Fall back to userinfo endpoint if ID token did not yield email
+        // 2. Fall back to userinfo endpoint if ID token was absent or cryptographically rejected
         if resolvedEmail == "Google User", let fetchedEmail = try? await fetchGoogleUserEmail(accessToken: accessToken) {
             resolvedEmail = fetchedEmail
         }
@@ -1017,8 +1167,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         return songs
     }
 
-    // MARK: - PKCE Cryptography Helpers (RFC 7636)
-    public static func generateCodeVerifier() -> String {
+    // MARK: - PKCE & Cryptography Helpers (RFC 7636 & OIDC Core 1.0)
+    nonisolated public static func generateCodeVerifier() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         return Data(bytes).base64EncodedString()
@@ -1027,7 +1177,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             .replacingOccurrences(of: "=", with: "")
     }
 
-    public static func generateCodeChallenge(from verifier: String) -> String {
+    nonisolated public static func generateCodeChallenge(from verifier: String) -> String {
         guard let data = verifier.data(using: .utf8) else { return verifier }
         let digest = CryptoUtils.sha256(data: data)
         return digest.base64EncodedString()
@@ -1036,7 +1186,11 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             .replacingOccurrences(of: "=", with: "")
     }
 
-    public static func generateStateToken() -> String {
+    nonisolated public static func generateStateToken() -> String {
+        generateCodeVerifier()
+    }
+
+    nonisolated public static func generateNonce() -> String {
         generateCodeVerifier()
     }
 }
