@@ -134,4 +134,154 @@ final class HawkSourcesTests: XCTestCase {
         let extractedSec = Double(expireVal!)!
         XCTAssertEqual(extractedSec, Double(Int(futureTime)))
     }
+
+    // MARK: - Google OAuth & OIDC Authentication Tests
+
+    private func createMockIdToken(
+        issuer: String = "https://accounts.google.com",
+        audience: String = "862376793952-test.apps.googleusercontent.com",
+        subject: String = "123456789",
+        email: String = "tester@gmail.com",
+        expiration: TimeInterval = Date().addingTimeInterval(3600).timeIntervalSince1970
+    ) -> String {
+        let header = "{\"alg\":\"RS256\",\"typ\":\"JWT\"}".data(using: .utf8)!.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let payloadJson = "{\"iss\":\"\(issuer)\",\"aud\":\"\(audience)\",\"sub\":\"\(subject)\",\"email\":\"\(email)\",\"exp\":\(Int(expiration)),\"iat\":1700000000}"
+        let payload = payloadJson.data(using: .utf8)!.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let signature = "mock_signature_bytes".data(using: .utf8)!.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        return "\(header).\(payload).\(signature)"
+    }
+
+    @MainActor
+    func testOAuthCallbackValid() throws {
+        let state = "secure_random_state_12345"
+        let callback = URL(string: "com.googleusercontent.apps.862376793952-test:/oauth2callback?code=4/0AbcValidCode&state=\(state)")!
+        let code = try GoogleMusicSyncManager.validateOAuthCallback(
+            url: callback,
+            expectedState: state,
+            allowedScheme: "com.googleusercontent.apps.862376793952-test"
+        )
+        XCTAssertEqual(code, "4/0AbcValidCode")
+    }
+
+    @MainActor
+    func testOAuthCallbackInvalidState() {
+        let expectedState = "expected_state_abc"
+        let mismatchedCallback = URL(string: "com.googleusercontent.apps.862376793952-test:/oauth2callback?code=4/0Abc&state=attacker_state_xyz")!
+        XCTAssertThrowsError(
+            try GoogleMusicSyncManager.validateOAuthCallback(url: mismatchedCallback, expectedState: expectedState)
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("state mismatch"))
+        }
+
+        let missingStateCallback = URL(string: "com.googleusercontent.apps.862376793952-test:/oauth2callback?code=4/0Abc")!
+        XCTAssertThrowsError(
+            try GoogleMusicSyncManager.validateOAuthCallback(url: missingStateCallback, expectedState: expectedState)
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("state parameter missing"))
+        }
+    }
+
+    @MainActor
+    func testOAuthCallbackInvalidRedirectUri() {
+        let state = "valid_state"
+        let invalidScheme = URL(string: "malicious.app:/oauth2callback?code=4/0Abc&state=\(state)")!
+        XCTAssertThrowsError(
+            try GoogleMusicSyncManager.validateOAuthCallback(url: invalidScheme, expectedState: state, allowedScheme: "com.googleusercontent.apps.test")
+        )
+
+        let invalidPath = URL(string: "com.googleusercontent.apps.test:/wrongpath?code=4/0Abc&state=\(state)")!
+        XCTAssertThrowsError(
+            try GoogleMusicSyncManager.validateOAuthCallback(url: invalidPath, expectedState: state, allowedScheme: "com.googleusercontent.apps.test")
+        )
+    }
+
+    func testOAuthAccessDeniedTestingModeErrorMapping() {
+        let googleTestingDesc = "Access blocked: Hawk IOS has not completed the Google verification process. The app is currently being tested and can only be accessed by developer-approved testers."
+        let mapped = GoogleMusicSyncManager.mapOAuthError(code: "access_denied", description: googleTestingDesc)
+        XCTAssertTrue(mapped.contains("403: access_denied"))
+        XCTAssertTrue(mapped.contains("Test users"))
+        XCTAssertTrue(mapped.contains("Testing"))
+
+        // Standard user cancellation
+        let standardUserCancel = GoogleMusicSyncManager.mapOAuthError(code: "access_denied")
+        XCTAssertTrue(standardUserCancel.contains("access was blocked or denied"))
+    }
+
+    func testOAuthStandardErrorMappings() {
+        XCTAssertTrue(GoogleMusicSyncManager.mapOAuthError(code: "invalid_client").contains("invalid or not found"))
+        XCTAssertTrue(GoogleMusicSyncManager.mapOAuthError(code: "deleted_client").contains("deleted"))
+        XCTAssertTrue(GoogleMusicSyncManager.mapOAuthError(code: "redirect_uri_mismatch").contains("redirect URI mismatch"))
+        XCTAssertTrue(GoogleMusicSyncManager.mapOAuthError(code: "invalid_grant").contains("expired or been revoked"))
+        XCTAssertTrue(GoogleMusicSyncManager.mapOAuthError(code: "invalid_scope").contains("scope is invalid"))
+        XCTAssertTrue(GoogleMusicSyncManager.mapOAuthError(code: "unauthorized_client").contains("unauthorized"))
+    }
+
+    func testIdTokenValidationSuccess() {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createMockIdToken(audience: audience, email: "developer@example.com")
+        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: audience)
+
+        switch result {
+        case .success(let claims):
+            XCTAssertEqual(claims.issuer, "https://accounts.google.com")
+            XCTAssertEqual(claims.audience, audience)
+            XCTAssertEqual(claims.subject, "123456789")
+            XCTAssertEqual(claims.email, "developer@example.com")
+            XCTAssertGreaterThan(claims.expiration, Date())
+        case .failure(let err):
+            XCTFail("ID token validation failed unexpectedly: \(err)")
+        }
+    }
+
+    func testIdTokenValidationAudienceMismatch() {
+        let token = createMockIdToken(audience: "attacker_client_id.apps.googleusercontent.com")
+        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: "legitimate_client_id.apps.googleusercontent.com")
+
+        guard case .failure(let err) = result, case .audienceMismatch = err else {
+            XCTFail("Expected audienceMismatch error, got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationInvalidIssuer() {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createMockIdToken(issuer: "https://evil-auth.com", audience: audience)
+        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: audience)
+
+        guard case .failure(let err) = result, case .invalidIssuer = err else {
+            XCTFail("Expected invalidIssuer error, got: \(result)")
+            return
+        }
+    }
+
+    func testIdTokenValidationExpired() {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let pastExp = Date().addingTimeInterval(-300).timeIntervalSince1970
+        let token = createMockIdToken(audience: audience, expiration: pastExp)
+        let result = GoogleMusicSyncManager.validateIdToken(rawToken: token, expectedAudience: audience)
+
+        guard case .failure(let err) = result, case .tokenExpired = err else {
+            XCTFail("Expected tokenExpired error, got: \(result)")
+            return
+        }
+    }
+
+    @MainActor
+    func testGoogleSyncConnectAndDisconnectLifecycle() async throws {
+        let manager = GoogleMusicSyncManager.shared
+        try await manager.connectWithToken(
+            email: "test_tester@gmail.com",
+            accessToken: "mock_access_token_123",
+            refreshToken: "mock_refresh_token_456"
+        )
+        XCTAssertTrue(manager.isConnected)
+        XCTAssertEqual(manager.accountEmail, "test_tester@gmail.com")
+
+        await manager.disconnect()
+        XCTAssertFalse(manager.isConnected)
+        XCTAssertNil(manager.accountEmail)
+    }
 }

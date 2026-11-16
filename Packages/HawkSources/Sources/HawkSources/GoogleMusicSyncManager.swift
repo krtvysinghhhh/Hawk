@@ -31,6 +31,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     // Google OAuth 2.0 configuration
     private let scopes = [
+        "openid",
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/youtube.readonly"
     ].joined(separator: " ")
@@ -175,7 +176,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     /// Derives standard Google iOS reversed Client ID scheme (RFC 8252) from Client ID.
     /// E.g. `123456-abc.apps.googleusercontent.com` -> `com.googleusercontent.apps.123456-abc`
-    public static func reversedScheme(for clientId: String) -> String {
+    nonisolated public static func reversedScheme(for clientId: String) -> String {
         let trimmed = clientId.trimmingCharacters(in: .whitespacesAndNewlines)
         let suffix = ".apps.googleusercontent.com"
         if trimmed.hasSuffix(suffix) {
@@ -186,13 +187,13 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     }
 
     /// Derives standard Google iOS OAuth 2.0 redirect URI from Client ID.
-    public static func redirectUri(for clientId: String) -> String {
+    nonisolated public static func redirectUri(for clientId: String) -> String {
         let scheme = reversedScheme(for: clientId)
         return "\(scheme):/oauth2callback"
     }
 
     /// Maps Google OAuth 2.0 error codes to user-friendly, actionable diagnostic guidance.
-    public static func mapOAuthError(code: String, description: String? = nil) -> String {
+    nonisolated public static func mapOAuthError(code: String, description: String? = nil) -> String {
         switch code.lowercased() {
         case "invalid_client":
             return "Google OAuth Client ID is invalid or not found in Google Cloud Console. Please configure an authorized iOS Client ID for bundle identifier 'com.hawk.music'."
@@ -203,7 +204,16 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         case "invalid_grant":
             return "Authorization code or refresh token has expired or been revoked (invalid_grant). Please sign in again."
         case "access_denied":
-            return "Google sign-in was cancelled or access was denied by the user."
+            if let desc = description, !desc.isEmpty {
+                if desc.localizedCaseInsensitiveContains("testing") ||
+                   desc.localizedCaseInsensitiveContains("verification") ||
+                   desc.localizedCaseInsensitiveContains("developer-approved") ||
+                   desc.localizedCaseInsensitiveContains("tester") {
+                    return "Google OAuth Access Blocked (403: access_denied): The app is in Google Cloud 'Testing' mode. Your Google account email must be added to 'Test users' in Google Cloud Console (APIs & Services → OAuth consent screen → Test users)."
+                }
+                return "Google sign-in access denied: \(desc)"
+            }
+            return "Google sign-in access was blocked or denied (403: access_denied). If your Google Cloud project is in 'Testing' mode, your email must be added to 'Test users' in Google Cloud Console (OAuth consent screen → Test users)."
         case "invalid_scope":
             return "Requested OAuth scope is invalid. Ensure YouTube Data API v3 and Google userinfo scopes are enabled in Google Cloud Console."
         case "unauthorized_client":
@@ -216,6 +226,109 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             }
             return "Google authentication failed (\(code)). Please try again."
         }
+    }
+
+    // MARK: - OpenID Connect (OIDC) ID Token Validation
+    public struct IdTokenClaims: Sendable, Equatable {
+        public let issuer: String
+        public let audience: String
+        public let subject: String
+        public let email: String?
+        public let expiration: Date
+        public let issuedAt: Date
+
+        public init(issuer: String, audience: String, subject: String, email: String?, expiration: Date, issuedAt: Date) {
+            self.issuer = issuer
+            self.audience = audience
+            self.subject = subject
+            self.email = email
+            self.expiration = expiration
+            self.issuedAt = issuedAt
+        }
+    }
+
+    public enum IdTokenValidationError: Error, CustomStringConvertible, Sendable, Equatable {
+        case malformedJwt
+        case invalidBase64
+        case invalidJson
+        case invalidIssuer(String)
+        case audienceMismatch(expected: String, actual: String)
+        case tokenExpired(expiration: Date, now: Date)
+        case missingSubject
+
+        public var description: String {
+            switch self {
+            case .malformedJwt:
+                return "ID token does not have 3 segments (header.payload.signature)."
+            case .invalidBase64:
+                return "Failed to decode base64url payload in ID token."
+            case .invalidJson:
+                return "ID token payload is not valid JSON."
+            case .invalidIssuer(let iss):
+                return "Invalid ID token issuer: '\(iss)'. Expected 'accounts.google.com'."
+            case .audienceMismatch(let expected, let actual):
+                return "ID token audience mismatch: expected '\(expected)', got '\(actual)'."
+            case .tokenExpired(let exp, let now):
+                return "ID token has expired (exp: \(exp), now: \(now))."
+            case .missingSubject:
+                return "ID token missing 'sub' claim."
+            }
+        }
+    }
+
+    /// Validates OIDC ID token structure, issuer, audience, and expiration.
+    nonisolated public static func validateIdToken(rawToken: String, expectedAudience: String, now: Date = Date()) -> Result<IdTokenClaims, IdTokenValidationError> {
+        let parts = rawToken.components(separatedBy: ".")
+        guard parts.count == 3 else {
+            return .failure(.malformedJwt)
+        }
+        guard let payloadData = base64UrlDecode(parts[1]) else {
+            return .failure(.invalidBase64)
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            return .failure(.invalidJson)
+        }
+
+        guard let iss = json["iss"] as? String, (iss == "https://accounts.google.com" || iss == "accounts.google.com") else {
+            return .failure(.invalidIssuer(json["iss"] as? String ?? "missing"))
+        }
+
+        guard let aud = json["aud"] as? String, aud == expectedAudience else {
+            return .failure(.audienceMismatch(expected: expectedAudience, actual: json["aud"] as? String ?? "missing"))
+        }
+
+        guard let sub = json["sub"] as? String, !sub.isEmpty else {
+            return .failure(.missingSubject)
+        }
+
+        let expSec = (json["exp"] as? Double) ?? 0
+        let expDate = Date(timeIntervalSince1970: expSec)
+        if expDate <= now {
+            return .failure(.tokenExpired(expiration: expDate, now: now))
+        }
+
+        let iatSec = (json["iat"] as? Double) ?? 0
+        let iatDate = Date(timeIntervalSince1970: iatSec)
+        let email = json["email"] as? String
+
+        return .success(IdTokenClaims(
+            issuer: iss,
+            audience: aud,
+            subject: sub,
+            email: email,
+            expiration: expDate,
+            issuedAt: iatDate
+        ))
+    }
+
+    nonisolated public static func base64UrlDecode(_ string: String) -> Data? {
+        var base64 = string
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 {
+            base64.append("=")
+        }
+        return Data(base64Encoded: base64)
     }
 
     public override init() {
@@ -258,7 +371,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     // MARK: - OAuth 2.0 Callback Validation (Public for Testing)
     /// Validates an incoming OAuth 2.0 callback URL against state, redirect scheme, path, and error conditions.
-    public static func validateOAuthCallback(url: URL, expectedState: String, allowedScheme: String? = nil) throws -> String {
+    nonisolated public static func validateOAuthCallback(url: URL, expectedState: String, allowedScheme: String? = nil) throws -> String {
         guard let scheme = url.scheme?.lowercased() else {
             throw HawkError.authRequired("OAuth callback missing URL scheme")
         }
@@ -360,7 +473,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                     let nsError = error as NSError
                     if nsError.domain == ASWebAuthenticationSessionErrorDomain &&
                         nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                        continuation.resume(throwing: HawkError.authRequired("Google sign-in was cancelled by the user."))
+                        continuation.resume(throwing: HawkError.authRequired("Google sign-in was closed. If Google displayed 'Access blocked: Hawk IOS has not completed the Google verification process (403: access_denied)', add your signing-in Google email to 'Test users' in Google Cloud Console (OAuth consent screen → Test users)."))
                     } else {
                         continuation.resume(throwing: HawkError.authRequired(error.localizedDescription))
                     }
@@ -580,9 +693,26 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
         let refreshToken = json["refresh_token"] as? String
         let expiresIn = json["expires_in"] as? Double ?? 3600
-        let email = (try? await fetchGoogleUserEmail(accessToken: accessToken)) ?? "Google User"
+        var resolvedEmail = "Google User"
 
-        try await connectWithToken(email: email, accessToken: accessToken, refreshToken: refreshToken, expiresIn: expiresIn)
+        // 1. Prefer authenticated user email from validated OIDC ID token
+        if let idToken = json["id_token"] as? String {
+            switch Self.validateIdToken(rawToken: idToken, expectedAudience: activeClientId) {
+            case .success(let claims):
+                if let tokenEmail = claims.email, !tokenEmail.isEmpty {
+                    resolvedEmail = tokenEmail
+                }
+            case .failure(let valErr):
+                print("[GoogleOAuth] OIDC ID token claim verification notice: \(valErr.description)")
+            }
+        }
+
+        // 2. Fall back to userinfo endpoint if ID token did not yield email
+        if resolvedEmail == "Google User", let fetchedEmail = try? await fetchGoogleUserEmail(accessToken: accessToken) {
+            resolvedEmail = fetchedEmail
+        }
+
+        try await connectWithToken(email: resolvedEmail, accessToken: accessToken, refreshToken: refreshToken, expiresIn: expiresIn)
 
         if isAutoSyncEnabled {
             await syncNow()

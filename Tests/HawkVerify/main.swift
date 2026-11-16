@@ -411,6 +411,24 @@ func runAllVerifications() async {
     let unauthorizedClientMsg = GoogleMusicSyncManager.mapOAuthError(code: "unauthorized_client")
     assertTest(.unit, "OAuth error mapping for 'unauthorized_client' advises iOS client type", unauthorizedClientMsg.contains("iOS"))
 
+    // Test access_denied with Google verification/testing block description
+    let testingDesc = "Access blocked: Hawk IOS has not completed the Google verification process. The app is currently being tested and can only be accessed by developer-approved testers."
+    let accessDeniedTestingMsg = GoogleMusicSyncManager.mapOAuthError(code: "access_denied", description: testingDesc)
+    assertTest(.unit, "OAuth error mapping for testing-mode 403 access_denied directs to GCP Test Users", accessDeniedTestingMsg.contains("Test users") && accessDeniedTestingMsg.contains("403: access_denied"))
+
+    // Test OIDC ID Token validation
+    let validAudience = "862376793952-test.apps.googleusercontent.com"
+    let mockHeader = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
+    let mockPayload = "eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhdWQiOiI4NjIzNzY3OTM5NTItdGVzdC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsInN1YiI6IjEyMzQ1Njc4OSIsImVtYWlsIjoidGVzdGVyQGdtYWlsLmNvbSIsImV4cCI6MjUwMDAwMDAwMCwiaWF0IjoxNzAwMDAwMDAwfQ"
+    let mockIdToken = "\(mockHeader).\(mockPayload).mock_sig"
+    let idTokenValidation = GoogleMusicSyncManager.validateIdToken(rawToken: mockIdToken, expectedAudience: validAudience)
+    let idTokenPass = if case .success(let claims) = idTokenValidation { claims.email == "tester@gmail.com" } else { false }
+    assertTest(.unit, "OIDC ID token validator extracts claims and validates Google issuer and audience", idTokenPass)
+
+    let mismatchValidation = GoogleMusicSyncManager.validateIdToken(rawToken: mockIdToken, expectedAudience: "wrong_audience")
+    let mismatchPass = if case .failure(let err) = mismatchValidation, case .audienceMismatch = err { true } else { false }
+    assertTest(.unit, "OIDC ID token validator rejects audience mismatch", mismatchPass)
+
     // Test access_denied error callback rejection
     let errorCallbackURL = URL(string: "com.hawk.music:/oauth2callback?error=access_denied&state=\(state)")!
     let errorPass = (try? GoogleMusicSyncManager.validateOAuthCallback(url: errorCallbackURL, expectedState: state)) == nil
