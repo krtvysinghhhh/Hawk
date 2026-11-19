@@ -456,17 +456,17 @@ struct FeaturedHeroView: View {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("FEATURED TRACK")
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(HawkTypography.caption2.weight(.heavy))
                         .foregroundColor(HawkTheme.primaryAccent)
                         .tracking(1.2)
 
                     Text(song.title)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(HawkTypography.title3.weight(.bold))
                         .foregroundColor(.white)
                         .lineLimit(1)
 
                     Text(song.artist)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(HawkTypography.subheadline.weight(.medium))
                         .foregroundColor(.white.opacity(0.8))
                         .lineLimit(1)
                 }
@@ -917,27 +917,8 @@ struct SongCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
-                if let url = song.artworkURL {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        default:
-                            cardPlaceholder
-                        }
-                    }
-                    .frame(width: 160, height: 160)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
-                    )
+                HawkArtwork(url: song.artworkURL, size: 160, cornerRadius: HawkRadius.lg)
                     .shadow(color: .black.opacity(0.28), radius: 8, y: 4)
-                } else {
-                    cardPlaceholder
-                }
 
                 // Mini Liquid Glass Play Accent
                 ZStack {
@@ -956,13 +937,13 @@ struct SongCardView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(HawkTypography.subheadline.weight(.semibold))
                     .foregroundColor(HawkTheme.textPrimary)
                     .lineLimit(1)
 
                 Text(song.artist)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(HawkTheme.textTertiary)
+                    .font(HawkTypography.caption1)
+                    .foregroundColor(HawkTheme.textSecondary)
                     .lineLimit(1)
             }
         }

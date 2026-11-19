@@ -765,22 +765,7 @@ public struct SongRowView: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            if let artworkURL = song.artworkURL {
-                AsyncImage(url: artworkURL) { phase in
-                    if let image = phase.image {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        rowPlaceholder
-                    }
-                }
-                .frame(width: 46, height: 46)
-                .cornerRadius(8)
-                .clipped()
-            } else {
-                rowPlaceholder
-            }
+            HawkArtwork(url: song.artworkURL, size: 46, cornerRadius: HawkRadius.sm)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title)
@@ -1432,6 +1417,7 @@ public struct RecentlyPlayedView: View {
 public struct YouTubeMusicImportsView: View {
     @State private var importedPlaylists: [Playlist] = []
     @State private var isLoading = true
+    @State private var navigateToSettings = false
     private var syncManager = GoogleMusicSyncManager.shared
     private var coordinator = PlaybackCoordinator.shared
 
@@ -1524,6 +1510,8 @@ public struct YouTubeMusicImportsView: View {
                                     await syncManager.syncNow()
                                     await loadImports()
                                 }
+                            } else {
+                                navigateToSettings = true
                             }
                         }
                     )
@@ -1562,6 +1550,9 @@ public struct YouTubeMusicImportsView: View {
             }
         }
         .navigationTitle("YouTube Music Imports")
+        .navigationDestination(isPresented: $navigateToSettings) {
+            GoogleYouTubeMusicSettingsView()
+        }
         .task {
             await loadImports()
             isLoading = false

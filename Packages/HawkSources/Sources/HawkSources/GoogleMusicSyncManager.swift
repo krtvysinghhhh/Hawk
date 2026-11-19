@@ -20,6 +20,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     public private(set) var syncedPlaylistsCount: Int = 0
     public private(set) var syncedSongsCount: Int = 0
     public private(set) var syncProgress: Double = 0.0
+    private var isCancellationRequested: Bool = false
     private var activeSyncTask: Task<Void, Never>?
 
     public var isAutoSyncEnabled: Bool {
@@ -887,6 +888,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     // MARK: - YouTube Music Library Synchronisation (Music-Only Scope & Robust Pagination)
     public func cancelSync() {
+        isCancellationRequested = true
         activeSyncTask?.cancel()
         activeSyncTask = nil
         isSyncing = false
@@ -900,6 +902,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             return
         }
 
+        isCancellationRequested = false
         isSyncing = true
         syncProgress = 0.05
         syncStatusMessage = "Syncing YouTube Music library..."
@@ -922,7 +925,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let totalSteps = max(playlists.count + 1, 1)
 
             for (index, p) in playlists.enumerated() {
-                try Task.checkCancellation()
+                if isCancellationRequested || Task.isCancelled {
+                    throw CancellationError()
+                }
 
                 let tracks: [Song]
                 do {
@@ -953,14 +958,19 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 self.syncStatusMessage = "Synced \(totalSyncedPlaylists) playlists (\(p.title))..."
             }
 
-            try Task.checkCancellation()
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
+            }
 
             // 2. Fetch Liked Music Tracks (Strict Category: Music)
             let likedTracks = try await fetchLikedMusic(accessToken: token)
-            for track in likedTracks {
-                if Task.isCancelled { break }
-                _ = await PlaylistStore.shared.addSong(to: Playlist.favoritesId, song: track)
-                totalSyncedSongs += 1
+            if !likedTracks.isEmpty {
+                _ = await PlaylistStore.shared.createPlaylist(title: "YT Music: Liked Music", initialSongs: likedTracks)
+                for track in likedTracks {
+                    if isCancellationRequested || Task.isCancelled { break }
+                    _ = await PlaylistStore.shared.addSong(to: Playlist.favoritesId, song: track)
+                    totalSyncedSongs += 1
+                }
             }
 
             self.syncedPlaylistsCount = totalSyncedPlaylists
@@ -971,7 +981,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
             self.syncStatusMessage = "Sync complete: \(totalSyncedPlaylists) playlists, \(totalSyncedSongs) tracks."
         } catch is CancellationError {
-            self.syncStatusMessage = "Sync cancelled."
+            self.syncStatusMessage = "Sync cancelled by user."
         } catch {
             self.syncStatusMessage = "Sync failed: \(error.localizedDescription)"
         }
@@ -983,7 +993,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     public func getYouTubeImportedPlaylists() async -> [Playlist] {
         let all = await PlaylistStore.shared.getAllPlaylists()
         return all.filter { playlist in
-            playlist.title.starts(with: "YT Music:") || playlist.songs.contains(where: { $0.sourceId == "youtube" })
+            playlist.id != Playlist.favoritesId &&
+            (playlist.title.starts(with: "YT Music:") || playlist.songs.contains(where: { $0.sourceId == "youtube" }))
         }
     }
 

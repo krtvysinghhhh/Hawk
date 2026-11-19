@@ -5,19 +5,19 @@ import HawkSources
 
 // MARK: - HAWK Design System Tokens
 
-/// Strict typography scale based on Apple SF Pro.
+/// Strict typography scale based on Apple SF Pro with dynamic type scaling support.
 public enum HawkTypography {
-    public static let largeTitle = Font.system(size: 34, weight: .bold, design: .default)
-    public static let title1 = Font.system(size: 28, weight: .bold, design: .default)
-    public static let title2 = Font.system(size: 22, weight: .bold, design: .default)
-    public static let title3 = Font.system(size: 20, weight: .semibold, design: .default)
-    public static let headline = Font.system(size: 17, weight: .semibold, design: .default)
-    public static let body = Font.system(size: 17, weight: .regular, design: .default)
-    public static let callout = Font.system(size: 16, weight: .regular, design: .default)
-    public static let subheadline = Font.system(size: 15, weight: .regular, design: .default)
-    public static let footnote = Font.system(size: 13, weight: .regular, design: .default)
-    public static let caption1 = Font.system(size: 12, weight: .regular, design: .default)
-    public static let caption2 = Font.system(size: 11, weight: .regular, design: .default)
+    public static let largeTitle = Font.system(.largeTitle, design: .default).weight(.bold)
+    public static let title1 = Font.system(.title, design: .default).weight(.bold)
+    public static let title2 = Font.system(.title2, design: .default).weight(.bold)
+    public static let title3 = Font.system(.title3, design: .default).weight(.semibold)
+    public static let headline = Font.system(.headline, design: .default)
+    public static let body = Font.system(.body, design: .default)
+    public static let callout = Font.system(.callout, design: .default)
+    public static let subheadline = Font.system(.subheadline, design: .default)
+    public static let footnote = Font.system(.footnote, design: .default)
+    public static let caption1 = Font.system(.caption, design: .default)
+    public static let caption2 = Font.system(.caption2, design: .default)
 }
 
 /// Spacing scale (4pt baseline grid).
