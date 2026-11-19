@@ -96,4 +96,38 @@ final class HawkPlaybackTests: XCTestCase {
         let nextId = await engine.activePlayRequestId
         XCTAssertGreaterThan(nextId, initialId)
     }
+
+    func testQueueSnapshotCorruptedFileGracefulHandling() {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let corruptedURL = tempDir.appendingPathComponent("corrupted_snapshot.json")
+        let invalidData = "{\n  \"invalid\": [broken json format\n".data(using: .utf8)!
+        try! invalidData.write(to: corruptedURL)
+
+        // Must fail safe and return nil without crashing
+        let result = QueueManager.loadSnapshot(from: corruptedURL)
+        XCTAssertNil(result)
+    }
+
+    func testQueueManualReordering() async {
+        let q = QueueManager()
+        let song1 = Song(id: "s1", title: "Track 1", artist: "Artist A")
+        let song2 = Song(id: "s2", title: "Track 2", artist: "Artist B")
+        let song3 = Song(id: "s3", title: "Track 3", artist: "Artist C")
+
+        await q.addToQueue(song: song1)
+        await q.addToQueue(song: song2)
+        await q.addToQueue(song: song3)
+
+        // Move first item (s1) to index 3 (end of queue)
+        await q.moveUserQueueItem(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+
+        let userQ = await q.userQueue
+        XCTAssertEqual(userQ.count, 3)
+        XCTAssertEqual(userQ[0].id, "s2")
+        XCTAssertEqual(userQ[1].id, "s3")
+        XCTAssertEqual(userQ[2].id, "s1")
+    }
 }

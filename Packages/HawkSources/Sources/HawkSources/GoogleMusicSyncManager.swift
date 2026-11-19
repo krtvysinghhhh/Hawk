@@ -1130,6 +1130,102 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         return songs
     }
 
+    // MARK: - ISO 8601 Duration Parser
+    nonisolated public static func parseISO8601Duration(_ text: String) -> TimeInterval {
+        // Formats: "PT4M13S", "PT1H2M10S", "PT45S", "PT1H"
+        var str = text
+        guard str.hasPrefix("PT") else { return 0 }
+        str.removeFirst(2)
+
+        var hours: Double = 0
+        var minutes: Double = 0
+        var seconds: Double = 0
+
+        if let hRange = str.range(of: "H") {
+            let hStr = String(str[..<hRange.lowerBound])
+            hours = Double(hStr) ?? 0
+            str = String(str[hRange.upperBound...])
+        }
+        if let mRange = str.range(of: "M") {
+            let mStr = String(str[..<mRange.lowerBound])
+            minutes = Double(mStr) ?? 0
+            str = String(str[mRange.upperBound...])
+        }
+        if let sRange = str.range(of: "S") {
+            let sStr = String(str[..<sRange.lowerBound])
+            seconds = Double(sStr) ?? 0
+        }
+
+        return hours * 3600 + minutes * 60 + seconds
+    }
+
+    /// Parses YouTube Data API v3 `videos.list?myRating=like` JSON response.
+    /// Filters out non-music category videos (YouTube category 10 is Music), podcasts, gaming, sound effects, and deleted items.
+    nonisolated public static func parseLikedVideosResponse(data: Data) throws -> (songs: [Song], nextPageToken: String?) {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HawkError.decodeError("Invalid YouTube API JSON response")
+        }
+
+        let nextPageToken = json["nextPageToken"] as? String
+        guard let items = json["items"] as? [[String: Any]] else {
+            return ([], nextPageToken)
+        }
+
+        var songs: [Song] = []
+        for item in items {
+            guard let id = item["id"] as? String,
+                  let snippet = item["snippet"] as? [String: Any],
+                  let title = snippet["title"] as? String,
+                  title != "Private video" && title != "Deleted video" else { continue }
+
+            let channelTitle = snippet["videoOwnerChannelTitle"] as? String ?? snippet["channelTitle"] as? String ?? "Unknown Artist"
+            let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
+            let categoryId = snippet["categoryId"] as? String
+
+            var duration: TimeInterval = 210
+            if let contentDetails = item["contentDetails"] as? [String: Any],
+               let durStr = contentDetails["duration"] as? String {
+                let parsed = parseISO8601Duration(durStr)
+                if parsed > 0 { duration = parsed }
+            }
+
+            // Strict classification: requires categoryId == "10" (Music) and checks non-music keywords
+            let classificationResult = MusicClassificationService.classify(
+                title: title,
+                channelOrArtist: channelTitle,
+                duration: duration,
+                categoryId: categoryId
+            )
+
+            guard classificationResult.classification.isPlayableSong else {
+                continue
+            }
+
+            var artworkURL: URL?
+            if let thumbs = snippet["thumbnails"] as? [String: Any] {
+                if let maxres = thumbs["maxres"] as? [String: Any], let urlStr = maxres["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let high = thumbs["high"] as? [String: Any], let urlStr = high["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let standard = thumbs["standard"] as? [String: Any], let urlStr = standard["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                }
+            }
+
+            let song = Song(
+                id: id,
+                title: title,
+                artist: artist,
+                duration: duration,
+                artworkURL: artworkURL,
+                sourceId: "youtube"
+            )
+            songs.append(song)
+        }
+
+        return (songs, nextPageToken)
+    }
+
     private func fetchLikedMusic(accessToken: String) async throws -> [Song] {
         var songs: [Song] = []
         var nextPageToken: String? = nil
@@ -1138,7 +1234,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
         repeat {
             pageCount += 1
-            var urlString = "https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&myRating=like&videoCategoryId=10&maxResults=50"
+            // Official YouTube Data API v3: myRating=like returns all user liked videos.
+            // videoCategoryId is mutually exclusive with myRating in videos.list and cannot be passed in query params.
+            var urlString = "https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&myRating=like&maxResults=50"
             if let token = nextPageToken {
                 urlString += "&pageToken=\(token)"
             }
@@ -1161,50 +1259,13 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 break
             }
 
-            guard (200...299).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let items = json["items"] as? [[String: Any]] else {
+            guard (200...299).contains(http.statusCode) else {
                 break
             }
 
-            for item in items {
-                guard let id = item["id"] as? String,
-                      let snippet = item["snippet"] as? [String: Any],
-                      let title = snippet["title"] as? String else { continue }
-
-                let channelTitle = snippet["channelTitle"] as? String ?? "Unknown Artist"
-                let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
-
-                let classificationResult = MusicClassificationService.classify(
-                    title: title,
-                    channelOrArtist: channelTitle,
-                    duration: 210,
-                    categoryId: "10"
-                )
-
-                guard classificationResult.classification.isPlayableSong else {
-                    continue
-                }
-
-                var artworkURL: URL?
-                if let thumbs = snippet["thumbnails"] as? [String: Any],
-                   let high = thumbs["high"] as? [String: Any],
-                   let urlStr = high["url"] as? String {
-                    artworkURL = URL(string: urlStr)
-                }
-
-                let song = Song(
-                    id: id,
-                    title: title,
-                    artist: artist,
-                    duration: 210,
-                    artworkURL: artworkURL,
-                    sourceId: "youtube"
-                )
-                songs.append(song)
-            }
-
-            nextPageToken = json["nextPageToken"] as? String
+            let result = try Self.parseLikedVideosResponse(data: data)
+            songs.append(contentsOf: result.songs)
+            nextPageToken = result.nextPageToken
         } while nextPageToken != nil && pageCount < maxPages
 
         return songs

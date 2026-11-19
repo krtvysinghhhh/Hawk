@@ -316,7 +316,7 @@ public actor QueueManager {
         try? data.write(to: queueStateURL, options: .atomic)
     }
 
-    private static func loadSnapshot(from url: URL) -> (userQueue: [Song], contextQueue: [Song], autoplayQueue: [Song], currentIndex: Int)? {
+    nonisolated public static func loadSnapshot(from url: URL) -> (userQueue: [Song], contextQueue: [Song], autoplayQueue: [Song], currentIndex: Int)? {
         guard let data = try? Data(contentsOf: url),
               let snapshot = try? JSONDecoder().decode(QueueSnapshot.self, from: data) else {
             return nil

@@ -110,7 +110,7 @@ public actor ArtworkResolver {
             return await ongoing.value
         }
 
-        // 4. Download from Network
+        // 4. Download from Network with Safe Fallback to Original URL
         let task = Task<Data?, Never> { [weak self] () -> Data? in
             guard let self else { return nil }
             var req = URLRequest(url: upgraded)
@@ -119,14 +119,27 @@ public actor ArtworkResolver {
 
             do {
                 let (data, response) = try await URLSession.shared.data(for: req)
-                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                    return nil
+                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    await self.persistToCache(data: data, cacheKey: cacheKey)
+                    return data
                 }
-                await self.persistToCache(data: data, cacheKey: cacheKey)
-                return data
             } catch {
-                return nil
+                // Proceed to fallback on network error or timeout
             }
+
+            // Fallback to original URL if upgraded URL failed or returned non-200
+            if upgraded != url {
+                var fallbackReq = URLRequest(url: url)
+                fallbackReq.timeoutInterval = 10.0
+                if let (fallbackData, fallbackResp) = try? await URLSession.shared.data(for: fallbackReq),
+                   let http = fallbackResp as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    let fallbackKey = self.cacheKeyForURL(url)
+                    await self.persistToCache(data: fallbackData, cacheKey: fallbackKey)
+                    return fallbackData
+                }
+            }
+
+            return nil
         }
 
         inFlightTasks[upgraded] = task
@@ -197,7 +210,7 @@ public actor ArtworkResolver {
     }
 
     // MARK: - Internal Key & Path Helpers
-    private func cacheKeyForURL(_ url: URL) -> String {
+    nonisolated private func cacheKeyForURL(_ url: URL) -> String {
         CryptoUtils.sha256Hex(url.absoluteString)
     }
 

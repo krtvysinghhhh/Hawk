@@ -919,6 +919,35 @@ func runAllVerifications() async {
     activeGoogleSync.cancelSync()
     assertTest(.unit, "GoogleMusicSyncManager cancelSync resets active state cleanly", !activeGoogleSync.isSyncing)
 
+    // 8. YouTube Liked Videos Category Filtering (Requires Category 10 - Music)
+    let mockLikedJSON = """
+    {
+        "nextPageToken": "token_123",
+        "items": [
+            {
+                "id": "song_1",
+                "snippet": { "title": "Starboy", "channelTitle": "The Weeknd - Topic", "categoryId": "10" },
+                "contentDetails": { "duration": "PT3M50S" }
+            },
+            {
+                "id": "gaming_2",
+                "snippet": { "title": "Minecraft Speedrun", "channelTitle": "Gamer", "categoryId": "20" },
+                "contentDetails": { "duration": "PT20M" }
+            }
+        ]
+    }
+    """.data(using: .utf8)!
+    let parsedLiked = try? GoogleMusicSyncManager.parseLikedVideosResponse(data: mockLikedJSON)
+    assertTest(.unit, "GoogleMusicSyncManager filters liked videos to music category 10 only", parsedLiked?.songs.count == 1 && parsedLiked?.songs.first?.id == "song_1")
+    assertTest(.unit, "GoogleMusicSyncManager parseISO8601Duration calculates 230 seconds for PT3M50S", GoogleMusicSyncManager.parseISO8601Duration("PT3M50S") == 230)
+
+    // 9. Queue Corrupted File Resilience
+    let corruptedURL = FileManager.default.temporaryDirectory.appendingPathComponent("corrupted_\(UUID().uuidString).json")
+    try? "{ corrupted json [ 0x00".data(using: .utf8)?.write(to: corruptedURL)
+    let corruptedResult = QueueManager.loadSnapshot(from: corruptedURL)
+    assertTest(.unit, "QueueManager.loadSnapshot safely returns nil on corrupted file", corruptedResult == nil)
+    try? FileManager.default.removeItem(at: corruptedURL)
+
     // ==========================================
     // FINAL CATEGORIZED AUDIT SUMMARY
     // ==========================================

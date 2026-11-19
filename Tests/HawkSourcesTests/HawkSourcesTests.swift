@@ -544,4 +544,162 @@ final class HawkSourcesTests: XCTestCase {
         let size = await resolver.diskCacheSize()
         XCTAssertEqual(size, 0)
     }
+
+    func testParseLikedVideosResponseFiltersNonMusicCategories() throws {
+        let jsonString = """
+        {
+            "nextPageToken": "next_page_token_abc",
+            "items": [
+                {
+                    "id": "song_valid_1",
+                    "snippet": {
+                        "title": "Blinding Lights",
+                        "videoOwnerChannelTitle": "The Weeknd - Topic",
+                        "categoryId": "10",
+                        "thumbnails": {
+                            "high": { "url": "https://i.ytimg.com/vi/song_valid_1/hqdefault.jpg" }
+                        }
+                    },
+                    "contentDetails": {
+                        "duration": "PT3M20S"
+                    }
+                },
+                {
+                    "id": "gameplay_vid_2",
+                    "snippet": {
+                        "title": "GTA 6 Gameplay Walkthrough Part 1",
+                        "channelTitle": "Gamer123",
+                        "categoryId": "20",
+                        "thumbnails": {
+                            "high": { "url": "https://i.ytimg.com/vi/gameplay_vid_2/hqdefault.jpg" }
+                        }
+                    },
+                    "contentDetails": {
+                        "duration": "PT15M30S"
+                    }
+                },
+                {
+                    "id": "vlog_vid_3",
+                    "snippet": {
+                        "title": "Daily Vlog in Tokyo Japan",
+                        "channelTitle": "Traveler",
+                        "categoryId": "22",
+                        "thumbnails": {
+                            "high": { "url": "https://i.ytimg.com/vi/vlog_vid_3/hqdefault.jpg" }
+                        }
+                    },
+                    "contentDetails": {
+                        "duration": "PT10M00S"
+                    }
+                },
+                {
+                    "id": "podcast_vid_4",
+                    "snippet": {
+                        "title": "AI Technology Podcast Episode 42",
+                        "channelTitle": "Tech Channel",
+                        "categoryId": "10",
+                        "thumbnails": {
+                            "high": { "url": "https://i.ytimg.com/vi/podcast_vid_4/hqdefault.jpg" }
+                        }
+                    },
+                    "contentDetails": {
+                        "duration": "PT45M12S"
+                    }
+                },
+                {
+                    "id": "deleted_vid_5",
+                    "snippet": {
+                        "title": "Deleted video",
+                        "channelTitle": "Unknown",
+                        "categoryId": "10"
+                    }
+                }
+            ]
+        }
+        """
+
+        guard let data = jsonString.data(using: .utf8) else {
+            XCTFail("Failed to encode test JSON")
+            return
+        }
+
+        let result = try GoogleMusicSyncManager.parseLikedVideosResponse(data: data)
+        XCTAssertEqual(result.nextPageToken, "next_page_token_abc")
+
+        // Only the valid music song (category 10, no non-music keywords, not deleted) must be accepted
+        XCTAssertEqual(result.songs.count, 1)
+        let accepted = result.songs[0]
+        XCTAssertEqual(accepted.id, "song_valid_1")
+        XCTAssertEqual(accepted.title, "Blinding Lights")
+        XCTAssertEqual(accepted.artist, "The Weeknd")
+        XCTAssertEqual(accepted.duration, 200) // 3 mins 20 secs = 200 seconds
+        XCTAssertEqual(accepted.artworkURL?.absoluteString, "https://i.ytimg.com/vi/song_valid_1/hqdefault.jpg")
+    }
+
+    func testParseISO8601Duration() {
+        XCTAssertEqual(GoogleMusicSyncManager.parseISO8601Duration("PT3M20S"), 200)
+        XCTAssertEqual(GoogleMusicSyncManager.parseISO8601Duration("PT1H2M10S"), 3730)
+        XCTAssertEqual(GoogleMusicSyncManager.parseISO8601Duration("PT45S"), 45)
+        XCTAssertEqual(GoogleMusicSyncManager.parseISO8601Duration("PT4M"), 240)
+        XCTAssertEqual(GoogleMusicSyncManager.parseISO8601Duration("PT1H"), 3600)
+        XCTAssertEqual(GoogleMusicSyncManager.parseISO8601Duration("invalid"), 0)
+        XCTAssertEqual(GoogleMusicSyncManager.parseISO8601Duration(""), 0)
+    }
+
+    func testIdTokenValidationMalformedJWT() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+
+        // 1. Empty string
+        let emptyResult = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: "",
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+        guard case .failure(let err1) = emptyResult, case .malformedJwt = err1 else {
+            XCTFail("Expected malformedJwt on empty string, got: \(emptyResult)")
+            return
+        }
+
+        // 2. Single token segment without dots
+        let singleSegment = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: "not_a_valid_jwt_token",
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+        guard case .failure(let err2) = singleSegment, case .malformedJwt = err2 else {
+            XCTFail("Expected malformedJwt on single segment, got: \(singleSegment)")
+            return
+        }
+
+        // 3. Two segments without signature
+        let twoSegments = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: "header.payload",
+            expectedAudience: audience,
+            customKeyResolver: Self.testKeyResolver
+        )
+        guard case .failure(let err3) = twoSegments, case .malformedJwt = err3 else {
+            XCTFail("Expected malformedJwt on 2 segments, got: \(twoSegments)")
+            return
+        }
+    }
+
+    func testIdTokenValidationKeyResolverFailure() async {
+        let audience = "862376793952-test.apps.googleusercontent.com"
+        let token = createSignedTestIdToken(audience: audience, email: "dev@example.com")
+
+        // Fail-closed test: custom resolver simulates network failure by returning nil
+        let networkFailureResolver: @Sendable (String) async throws -> SendableSecKey? = { _ in nil }
+
+        let result = await GoogleMusicSyncManager.validateIdToken(
+            rawToken: token,
+            expectedAudience: audience,
+            customKeyResolver: networkFailureResolver
+        )
+
+        guard case .failure(let err) = result, case .unknownSigningKey(let kid) = err else {
+            XCTFail("Expected unknownSigningKey on network resolver failure, got: \(result)")
+            return
+        }
+        XCTAssertEqual(kid, Self.testRsaKeyId)
+    }
 }
