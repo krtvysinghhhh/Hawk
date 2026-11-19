@@ -264,8 +264,8 @@ public struct NowPlayingView: View {
                 }
                 .padding(.vertical, 6)
 
-                // Bottom Quick Action Bar (Lyrics, AirPlay, Queue)
-                HStack(spacing: 36) {
+                // Bottom Quick Action Bar (Lyrics, AirPlay, Sleep Timer, Queue)
+                HStack(spacing: 28) {
                     Button(action: { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showLyrics.toggle() } }) {
                         Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
                             .font(.system(size: 20))
@@ -276,6 +276,34 @@ public struct NowPlayingView: View {
 
                     AirPlayButton()
                         .frame(width: 22, height: 22)
+
+                    Menu {
+                        ForEach(SleepTimerManager.Option.allCases) { opt in
+                            Button {
+                                SleepTimerManager.shared.setTimer(opt)
+                            } label: {
+                                HStack {
+                                    Text(opt.title)
+                                    if SleepTimerManager.shared.activeOption == opt {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: SleepTimerManager.shared.isActive ? "moon.zzz.fill" : "moon.zzz")
+                                .font(.system(size: 19))
+                                .foregroundColor(SleepTimerManager.shared.isActive ? HawkTheme.primaryAccent : HawkTheme.textSecondary)
+                            if SleepTimerManager.shared.isActive {
+                                Text(SleepTimerManager.shared.formattedRemainingTime)
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                            }
+                        }
+                    }
+                    .hawkPressEffect()
+                    .accessibilityLabel("Sleep Timer")
 
                     Button(action: { showQueue.toggle() }) {
                         Image(systemName: "list.bullet")

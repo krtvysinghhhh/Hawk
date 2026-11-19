@@ -468,6 +468,20 @@ public struct SettingsView: View {
                     }
                 }
 
+                // MARK: 2b. Listening Intelligence
+                Section(header: Text("Listening Intelligence").foregroundColor(HawkTheme.textSecondary)) {
+                    NavigationLink(destination: ListeningStatsDashboardView()) {
+                        HStack {
+                            Label("Personal Replay & Stats", systemImage: "chart.bar.xaxis")
+                                .foregroundColor(HawkTheme.textPrimary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(HawkTheme.textTertiary)
+                        }
+                    }
+                }
+
                 // MARK: 3. Playback
                 Section(header: Text("Playback").foregroundColor(HawkTheme.textSecondary)) {
                     Picker(selection: $audioQualityRaw) {
@@ -831,18 +845,44 @@ public struct AllSongsView: View {
     @State private var songs: [Song] = []
     @State private var searchText: String = ""
     @State private var isLoading = true
+    @State private var sortOption: SongSortOption = .title
+    @State private var isSelectionMode: Bool = false
+    @State private var selectedSongIds: Set<String> = []
+    @State private var showAddToPlaylistSheet: Bool = false
+    @State private var playlists: [Playlist] = []
     private var coordinator = PlaybackCoordinator.shared
+
+    public enum SongSortOption: String, CaseIterable, Identifiable {
+        case title = "Title (A-Z)"
+        case artist = "Artist (A-Z)"
+        case dateAdded = "Recently Added"
+        case duration = "Duration"
+
+        public var id: String { rawValue }
+    }
 
     public init() {}
 
-    private var filteredSongs: [Song] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-            return songs
+    private var sortedAndFilteredSongs: [Song] {
+        var result = songs
+        if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            result = result.filter { song in
+                song.title.localizedCaseInsensitiveContains(searchText) ||
+                song.artist.localizedCaseInsensitiveContains(searchText)
+            }
         }
-        return songs.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText) ||
-            $0.artist.localizedCaseInsensitiveContains(searchText)
+
+        switch sortOption {
+        case .title:
+            result.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case .artist:
+            result.sort { $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending }
+        case .dateAdded:
+            result.sort { ($0.dateAdded ?? .distantPast) > ($1.dateAdded ?? .distantPast) }
+        case .duration:
+            result.sort { $0.duration > $1.duration }
         }
+        return result
     }
 
     public var body: some View {
@@ -861,66 +901,209 @@ public struct AllSongsView: View {
                         .foregroundColor(HawkTheme.textTertiary)
                 }
             } else {
-                List {
-                    if !songs.isEmpty {
-                        HStack(spacing: 16) {
-                            Button {
-                                if let first = filteredSongs.first {
-                                    coordinator.play(song: first, context: filteredSongs)
+                VStack(spacing: 0) {
+                    List {
+                        if !songs.isEmpty && !isSelectionMode {
+                            HStack(spacing: 16) {
+                                Button {
+                                    if let first = sortedAndFilteredSongs.first {
+                                        coordinator.play(song: first, context: sortedAndFilteredSongs)
+                                    }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "play.fill")
+                                        Text("Play All")
+                                    }
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(HawkTheme.cardBackground)
+                                    .cornerRadius(10)
                                 }
-                            } label: {
-                                HStack {
-                                    Image(systemName: "play.fill")
-                                    Text("Play All")
-                                }
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(HawkTheme.primaryAccent)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(HawkTheme.cardBackground)
-                                .cornerRadius(10)
-                            }
 
-                            Button {
-                                if !filteredSongs.isEmpty {
-                                    let shuffled = filteredSongs.shuffled()
-                                    if let first = shuffled.first {
-                                        coordinator.play(song: first, context: shuffled)
+                                Button {
+                                    if !sortedAndFilteredSongs.isEmpty {
+                                        let shuffled = sortedAndFilteredSongs.shuffled()
+                                        if let first = shuffled.first {
+                                            coordinator.play(song: first, context: shuffled)
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "shuffle")
+                                        Text("Shuffle")
+                                    }
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(HawkTheme.cardBackground)
+                                    .cornerRadius(10)
+                                }
+                            }
+                            .listRowBackground(Color.clear)
+                            .padding(.vertical, 4)
+                        }
+
+                        ForEach(sortedAndFilteredSongs) { song in
+                            if isSelectionMode {
+                                HStack(spacing: HawkSpacing.md) {
+                                    Button {
+                                        if selectedSongIds.contains(song.id) {
+                                            selectedSongIds.remove(song.id)
+                                        } else {
+                                            selectedSongIds.insert(song.id)
+                                        }
+                                    } label: {
+                                        Image(systemName: selectedSongIds.contains(song.id) ? "checkmark.circle.fill" : "circle")
+                                            .foregroundColor(selectedSongIds.contains(song.id) ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
+                                            .font(.system(size: 20))
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    SongRowView(song: song)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    if selectedSongIds.contains(song.id) {
+                                        selectedSongIds.remove(song.id)
+                                    } else {
+                                        selectedSongIds.insert(song.id)
                                     }
                                 }
-                            } label: {
-                                HStack {
-                                    Image(systemName: "shuffle")
-                                    Text("Shuffle")
+                            } else {
+                                Button {
+                                    coordinator.play(song: song, context: sortedAndFilteredSongs)
+                                } label: {
+                                    SongRowView(song: song)
                                 }
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(HawkTheme.primaryAccent)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(HawkTheme.cardBackground)
-                                .cornerRadius(10)
+                                .buttonStyle(.plain)
                             }
                         }
-                        .listRowBackground(Color.clear)
-                        .padding(.vertical, 4)
                     }
+                    .scrollContentBackground(.hidden)
 
-                    ForEach(filteredSongs) { song in
-                        Button {
-                            coordinator.play(song: song, context: filteredSongs)
-                        } label: {
-                            SongRowView(song: song)
+                    if isSelectionMode {
+                        HStack(spacing: HawkSpacing.lg) {
+                            Button {
+                                if selectedSongIds.count == sortedAndFilteredSongs.count {
+                                    selectedSongIds.removeAll()
+                                } else {
+                                    selectedSongIds = Set(sortedAndFilteredSongs.map(\.id))
+                                }
+                            } label: {
+                                Text(selectedSongIds.count == sortedAndFilteredSongs.count ? "Deselect All" : "Select All")
+                                    .font(HawkTypography.subheadline.weight(.semibold))
+                                    .foregroundColor(HawkTheme.textPrimary)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                Task {
+                                    playlists = await PlaylistStore.shared.getAllPlaylists()
+                                    showAddToPlaylistSheet = true
+                                }
+                            } label: {
+                                Label("Add to Playlist", systemImage: "text.badge.plus")
+                                    .font(HawkTypography.subheadline.weight(.semibold))
+                                    .foregroundColor(selectedSongIds.isEmpty ? HawkTheme.textTertiary : HawkTheme.primaryAccent)
+                            }
+                            .disabled(selectedSongIds.isEmpty)
+
+                            Button {
+                                let selectedSongs = songs.filter { selectedSongIds.contains($0.id) }
+                                Task {
+                                    for s in selectedSongs {
+                                        try? await DownloadManager.shared.download(song: s)
+                                    }
+                                    isSelectionMode = false
+                                    selectedSongIds.removeAll()
+                                }
+                            } label: {
+                                Image(systemName: "arrow.down.circle")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(selectedSongIds.isEmpty ? HawkTheme.textTertiary : HawkTheme.primaryAccent)
+                            }
+                            .disabled(selectedSongIds.isEmpty)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, HawkSpacing.lg)
+                        .padding(.vertical, HawkSpacing.md)
+                        .background(HawkTheme.cardBackground)
+                        .overlay(
+                            Rectangle()
+                                .fill(HawkTheme.dividerColor)
+                                .frame(height: 0.8),
+                            alignment: .top
+                        )
                     }
                 }
-                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle("Songs")
         .searchable(text: $searchText, prompt: "Search Songs")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: HawkSpacing.sm) {
+                    Menu {
+                        Picker("Sort By", selection: $sortOption) {
+                            ForEach(SongSortOption.allCases) { opt in
+                                Text(opt.rawValue).tag(opt)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .foregroundColor(HawkTheme.primaryAccent)
+                    }
+
+                    Button {
+                        isSelectionMode.toggle()
+                        if !isSelectionMode {
+                            selectedSongIds.removeAll()
+                        }
+                    } label: {
+                        Text(isSelectionMode ? "Done" : "Select")
+                            .font(HawkTypography.subheadline.weight(.semibold))
+                            .foregroundColor(HawkTheme.primaryAccent)
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showAddToPlaylistSheet) {
+            NavigationStack {
+                ZStack {
+                    HawkTheme.darkBackground.ignoresSafeArea()
+                    List(playlists) { playlist in
+                        Button {
+                            let selectedSongs = songs.filter { selectedSongIds.contains($0.id) }
+                            Task {
+                                for s in selectedSongs {
+                                    await PlaylistStore.shared.addSong(to: playlist.id, song: s)
+                                }
+                                showAddToPlaylistSheet = false
+                                isSelectionMode = false
+                                selectedSongIds.removeAll()
+                            }
+                        } label: {
+                            HStack {
+                                Text(playlist.title)
+                                    .foregroundColor(HawkTheme.textPrimary)
+                                Spacer()
+                                Text("\(playlist.songs.count) songs")
+                                    .foregroundColor(HawkTheme.textSecondary)
+                                    .font(HawkTypography.caption1)
+                            }
+                        }
+                    }
+                    .scrollContentBackground(.hidden)
+                }
+                .navigationTitle("Add to Playlist")
+            }
+            .presentationDetents([.medium])
+        }
         .task {
-            songs = await LibraryAggregator.shared.allLibrarySongs().sorted { $0.title < $1.title }
+            songs = await LibraryAggregator.shared.allLibrarySongs()
             isLoading = false
         }
     }
@@ -1244,3 +1427,317 @@ public struct RecentlyPlayedView: View {
         }
     }
 }
+
+// MARK: - YouTube Music Imports View
+public struct YouTubeMusicImportsView: View {
+    @State private var importedPlaylists: [Playlist] = []
+    @State private var isLoading = true
+    private var syncManager = GoogleMusicSyncManager.shared
+    private var coordinator = PlaybackCoordinator.shared
+
+    public init() {}
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Sync Control Header Card
+                VStack(spacing: HawkSpacing.sm) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(syncManager.isConnected ? "Connected: \(syncManager.accountEmail ?? "Google Account")" : "Google Account Disconnected")
+                                .font(HawkTypography.subheadline.weight(.semibold))
+                                .foregroundColor(syncManager.isConnected ? HawkTheme.textPrimary : HawkTheme.textSecondary)
+
+                            if let lastSync = syncManager.lastSyncDate {
+                                Text("Last synced: \(lastSync.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(HawkTypography.caption1)
+                                    .foregroundColor(HawkTheme.textTertiary)
+                            } else {
+                                Text("Not synced yet")
+                                    .font(HawkTypography.caption1)
+                                    .foregroundColor(HawkTheme.textTertiary)
+                            }
+                        }
+
+                        Spacer()
+
+                        if syncManager.isConnected {
+                            if syncManager.isSyncing {
+                                HawkButton("Cancel", style: .ghost, size: .small) {
+                                    syncManager.cancelSync()
+                                }
+                            } else {
+                                HawkButton("Sync Now", icon: "arrow.triangle.2.circlepath", style: .primary, size: .small) {
+                                    Task {
+                                        await syncManager.syncNow()
+                                        await loadImports()
+                                    }
+                                }
+                            }
+                        } else {
+                            NavigationLink(destination: GoogleYouTubeMusicSettingsView()) {
+                                Text("Sign In")
+                                    .font(HawkTypography.subheadline.weight(.semibold))
+                                    .foregroundColor(HawkTheme.primaryAccent)
+                                    .padding(.horizontal, HawkSpacing.sm)
+                                    .padding(.vertical, HawkSpacing.xs)
+                                    .background(HawkTheme.primaryAccent.opacity(0.15))
+                                    .clipShape(RoundedRectangle(cornerRadius: HawkRadius.sm, style: .continuous))
+                            }
+                        }
+                    }
+
+                    if syncManager.isSyncing {
+                        VStack(spacing: 4) {
+                            ProgressView(value: syncManager.syncProgress, total: 1.0)
+                                .tint(HawkTheme.primaryAccent)
+
+                            if let msg = syncManager.syncStatusMessage {
+                                Text(msg)
+                                    .font(HawkTypography.caption2)
+                                    .foregroundColor(HawkTheme.textSecondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+                .padding(HawkSpacing.md)
+                .background(HawkTheme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous))
+                .padding(.horizontal, HawkSpacing.md)
+                .padding(.top, HawkSpacing.sm)
+
+                // Imported Playlists List
+                if importedPlaylists.isEmpty && !isLoading {
+                    HawkEmptyState(
+                        icon: "play.rectangle.on.rectangle",
+                        title: "No YouTube Music Imports",
+                        message: syncManager.isConnected
+                            ? "Tap 'Sync Now' above to import your YouTube playlists and liked music."
+                            : "Connect your Google account in Settings to synchronize your YouTube playlists.",
+                        buttonTitle: syncManager.isConnected ? "Sync Now" : "Connect Account",
+                        buttonAction: {
+                            if syncManager.isConnected {
+                                Task {
+                                    await syncManager.syncNow()
+                                    await loadImports()
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    List {
+                        ForEach(importedPlaylists) { playlist in
+                            NavigationLink(destination: PlaylistDetailView(playlist: playlist)) {
+                                HStack(spacing: HawkSpacing.md) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: HawkRadius.md, style: .continuous)
+                                            .fill(HawkTheme.secondarySurface)
+                                            .frame(width: 50, height: 50)
+
+                                        Image(systemName: "play.rectangle.fill")
+                                            .font(.system(size: 20))
+                                            .foregroundColor(HawkLibraryStyle.iconTint)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(playlist.title)
+                                            .font(HawkTypography.body.weight(.medium))
+                                            .foregroundColor(HawkTheme.textPrimary)
+                                            .lineLimit(1)
+
+                                        Text("\(playlist.songs.count) songs • YouTube")
+                                            .font(HawkTypography.caption1)
+                                            .foregroundColor(HawkTheme.textSecondary)
+                                    }
+                                }
+                                .padding(.vertical, HawkSpacing.xxs)
+                            }
+                        }
+                    }
+                    .scrollContentBackground(.hidden)
+                }
+            }
+        }
+        .navigationTitle("YouTube Music Imports")
+        .task {
+            await loadImports()
+            isLoading = false
+        }
+    }
+
+    private func loadImports() async {
+        importedPlaylists = await syncManager.getYouTubeImportedPlaylists()
+    }
+}
+
+// MARK: - Listening Intelligence Dashboard View
+public struct ListeningStatsDashboardView: View {
+    @State private var monthlyBucket: MonthlyBucket?
+    @State private var recentlyPlayedCount: Int = 0
+    @State private var isLoading = true
+
+    public init() {}
+
+    private var totalMinutes: Int {
+        guard let b = monthlyBucket else { return 0 }
+        return Int(b.totalListeningSeconds / 60.0)
+    }
+
+    private var totalHours: String {
+        let hrs = Double(totalMinutes) / 60.0
+        return String(format: "%.1f", hrs)
+    }
+
+    public var body: some View {
+        ZStack {
+            HawkTheme.darkBackground.ignoresSafeArea()
+
+            if isLoading {
+                ProgressView().tint(HawkTheme.primaryAccent)
+            } else if monthlyBucket == nil || (monthlyBucket?.tracks.isEmpty ?? true) {
+                HawkEmptyState(
+                    icon: "chart.bar.xaxis",
+                    title: "No Listening Stats Yet",
+                    message: "Play music to track authentic listening hours, top artists, and replay analytics."
+                )
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: HawkSpacing.lg) {
+                        // Metric Summary Grid
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: HawkSpacing.md) {
+                            metricCard(title: "LISTENING TIME", value: "\(totalHours) hrs", subtitle: "\(totalMinutes) total minutes")
+                            metricCard(title: "UNIQUE TRACKS", value: "\(monthlyBucket?.tracks.count ?? 0)", subtitle: "Streamed & local")
+                            metricCard(title: "ARTISTS", value: "\(monthlyBucket?.artists.count ?? 0)", subtitle: "Explored this month")
+                            metricCard(title: "RECENT PLAYS", value: "\(recentlyPlayedCount)", subtitle: "In playback history")
+                        }
+                        .padding(.horizontal, HawkSpacing.md)
+                        .padding(.top, HawkSpacing.sm)
+
+                        // Top Artists Breakdown
+                        if let topArtists = monthlyBucket?.topArtists, !topArtists.isEmpty {
+                            VStack(alignment: .leading, spacing: HawkSpacing.sm) {
+                                Text("Top Artists")
+                                    .font(HawkTypography.title3)
+                                    .foregroundColor(HawkTheme.textPrimary)
+                                    .padding(.horizontal, HawkSpacing.md)
+
+                                let maxCount = Double(topArtists.first?.playCount ?? 1)
+                                VStack(spacing: 8) {
+                                    ForEach(topArtists.prefix(5)) { artist in
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack {
+                                                Text(artist.name)
+                                                    .font(HawkTypography.body.weight(.medium))
+                                                    .foregroundColor(HawkTheme.textPrimary)
+                                                Spacer()
+                                                Text("\(artist.playCount) plays")
+                                                    .font(HawkTypography.caption1)
+                                                    .foregroundColor(HawkTheme.textSecondary)
+                                            }
+                                            GeometryReader { geo in
+                                                RoundedRectangle(cornerRadius: 3)
+                                                    .fill(HawkTheme.primaryAccent)
+                                                    .frame(width: max(geo.size.width * CGFloat(Double(artist.playCount) / maxCount), 8), height: 6)
+                                            }
+                                            .frame(height: 6)
+                                        }
+                                        .padding(.vertical, 4)
+                                    }
+                                }
+                                .padding(HawkSpacing.md)
+                                .background(HawkTheme.cardBackground)
+                                .clipShape(RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous))
+                                .padding(.horizontal, HawkSpacing.md)
+                            }
+                        }
+
+                        // Top Tracks Breakdown
+                        if let topTracks = monthlyBucket?.topTracks, !topTracks.isEmpty {
+                            VStack(alignment: .leading, spacing: HawkSpacing.sm) {
+                                Text("Most Repeated Tracks")
+                                    .font(HawkTypography.title3)
+                                    .foregroundColor(HawkTheme.textPrimary)
+                                    .padding(.horizontal, HawkSpacing.md)
+
+                                VStack(spacing: 0) {
+                                    ForEach(Array(topTracks.prefix(5).enumerated()), id: \.offset) { index, track in
+                                        HStack(spacing: HawkSpacing.md) {
+                                            Text("\(index + 1)")
+                                                .font(HawkTypography.headline)
+                                                .foregroundColor(index == 0 ? HawkTheme.primaryAccent : HawkTheme.textTertiary)
+                                                .frame(width: 24)
+
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(track.title)
+                                                    .font(HawkTypography.body.weight(.medium))
+                                                    .foregroundColor(HawkTheme.textPrimary)
+                                                    .lineLimit(1)
+                                                Text(track.artist)
+                                                    .font(HawkTypography.caption1)
+                                                    .foregroundColor(HawkTheme.textSecondary)
+                                                    .lineLimit(1)
+                                            }
+
+                                            Spacer()
+
+                                            Text("\(track.playCount) plays")
+                                                .font(HawkTypography.footnote)
+                                                .foregroundColor(HawkTheme.textTertiary)
+                                        }
+                                        .padding(.horizontal, HawkSpacing.md)
+                                        .padding(.vertical, 10)
+
+                                        if index < min(topTracks.count, 5) - 1 {
+                                            Divider()
+                                                .background(HawkTheme.dividerColor)
+                                                .padding(.leading, 50)
+                                        }
+                                    }
+                                }
+                                .background(HawkTheme.cardBackground)
+                                .clipShape(RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous))
+                                .padding(.horizontal, HawkSpacing.md)
+                            }
+                        }
+                    }
+                    .padding(.bottom, 60)
+                }
+            }
+        }
+        .navigationTitle("Listening Intelligence")
+        .task {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM"
+            let monthKey = formatter.string(from: Date())
+            monthlyBucket = await ListeningStatsRecorder.shared.getMonthlyReplay(monthKey: monthKey)
+            recentlyPlayedCount = await ListeningStatsRecorder.shared.getRecentlyPlayed().count
+            isLoading = false
+        }
+    }
+
+    private func metricCard(title: String, value: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(HawkTypography.caption2.weight(.bold))
+                .foregroundColor(HawkTheme.textTertiary)
+                .tracking(0.8)
+
+            Text(value)
+                .font(HawkTypography.title2.weight(.bold))
+                .foregroundColor(HawkTheme.primaryAccent)
+
+            Text(subtitle)
+                .font(HawkTypography.caption2)
+                .foregroundColor(HawkTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(HawkSpacing.md)
+        .background(HawkTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous))
+    }
+}
+
+

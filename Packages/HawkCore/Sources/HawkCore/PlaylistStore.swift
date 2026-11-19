@@ -160,6 +160,15 @@ public actor PlaylistStore {
         save()
     }
 
+    public func updatePlaylist(id: String, title: String? = nil, songs: [Song]? = nil) {
+        guard var playlist = playlists[id] else { return }
+        if let title { playlist.title = title }
+        if let songs { playlist.songs = songs }
+        playlist.dateModified = Date()
+        playlists[id] = playlist
+        save()
+    }
+
     public func importPlaylist(_ playlist: Playlist) {
         playlists[playlist.id] = playlist
         save()

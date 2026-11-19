@@ -70,6 +70,7 @@ public final class PlaybackCoordinator {
         Task { [weak self] in
             await HawkAudioEngine.shared.setOnTrackFinished { [weak self] in
                 Task { @MainActor [weak self] in
+                    SleepTimerManager.shared.onTrackFinished()
                     self?.next(isAutoAdvance: true)
                 }
             }

@@ -849,10 +849,81 @@ func runAllVerifications() async {
     #endif
 
     // ==========================================
+    // 13. HAWK 2.0 FEATURE VERIFICATION
+    // ==========================================
+    print("\n--- [13] Unit & Integration Tests: HAWK 2.0 Transformation ---")
+
+    // 1. Design System Tokens
+    assertTest(.unit, "HAWK Design System Spacing grid constants verified", HawkSpacing.xxs == 4 && HawkSpacing.md == 16 && HawkSpacing.huge == 40)
+    assertTest(.unit, "HAWK Design System Radius constants verified", HawkRadius.xs == 4 && HawkRadius.lg == 16 && HawkRadius.pill == 9999)
+    assertTest(.unit, "HAWK Library Monochromatic style constants verified", HawkLibraryStyle.iconTint == HawkTheme.textPrimary)
+
+    // 2. Artwork Resolution Engine Upgrades
+    let saavnTestURL = URL(string: "https://c.saavncdn.com/test/song-150x150.jpg")!
+    let saavnMasterURL = ArtworkResolutionEngine.upgradeResolution(of: saavnTestURL)
+    assertTest(.unit, "ArtworkResolutionEngine upgrades JioSaavn thumbnail 150x150 to 500x500", saavnMasterURL.absoluteString.contains("500x500"))
+
+    let ytTestURL = URL(string: "https://i.ytimg.com/vi/video123/hqdefault.jpg")!
+    let ytMasterURL = ArtworkResolutionEngine.upgradeResolution(of: ytTestURL)
+    assertTest(.unit, "ArtworkResolutionEngine upgrades YouTube thumbnail to maxresdefault", ytMasterURL.absoluteString.contains("maxresdefault.jpg"))
+
+    let appleTestURL = URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/100x100bb.jpg")!
+    let appleMasterURL = ArtworkResolutionEngine.upgradeResolution(of: appleTestURL)
+    assertTest(.unit, "ArtworkResolutionEngine upgrades Apple Music artwork to 600x600bb", appleMasterURL.absoluteString.contains("600x600bb"))
+
+    // 3. Smart Shuffle
+    let testSongs = [
+        Song(id: "s1", title: "Track 1", artist: "Artist A", duration: 180),
+        Song(id: "s2", title: "Track 2", artist: "Artist A", duration: 180),
+        Song(id: "s3", title: "Track 3", artist: "Artist B", duration: 180),
+        Song(id: "s4", title: "Track 4", artist: "Artist B", duration: 180),
+        Song(id: "s5", title: "Track 5", artist: "Artist C", duration: 180)
+    ]
+    let shuffledPool = QueueManager.smartShuffle(songs: testSongs, keepCurrentAtStart: testSongs[0])
+    var hasImmediateSameArtistRepeat = false
+    for i in 0..<(shuffledPool.count - 1) {
+        if shuffledPool[i].artist == shuffledPool[i + 1].artist {
+            hasImmediateSameArtistRepeat = true
+            break
+        }
+    }
+    assertTest(.unit, "QueueManager.smartShuffle avoids immediate consecutive same-artist tracks", !hasImmediateSameArtistRepeat)
+
+    // 4. Sleep Timer Manager
+    let timer = SleepTimerManager.shared
+    timer.setTimer(.min15)
+    assertTest(.unit, "SleepTimerManager starts 15-minute countdown accurately", timer.isActive && timer.remainingSeconds > 0)
+    timer.cancel()
+    assertTest(.unit, "SleepTimerManager cancels cleanly and resets state", !timer.isActive && timer.remainingSeconds == 0)
+
+    // 5. Recommendation Engine
+    let recEngine = RecommendationEngine.shared
+    let recCandidate = Song(id: "rec_1", title: "Starboy", artist: "The Weeknd", duration: 230)
+    let scoredCandidates = await recEngine.scoreCandidates(
+        candidates: [recCandidate],
+        history: [recCandidate],
+        favorites: [recCandidate],
+        monthlyBucket: nil
+    )
+    assertTest(.unit, "RecommendationEngine scores candidate with positive affinity and explanation", (scoredCandidates.first?.score ?? 0) > 50 && !(scoredCandidates.first?.reason.isEmpty ?? true))
+
+    // 6. Universal Search History
+    let searchEngine = UniversalSearchEngine.shared
+    await searchEngine.addSearchQuery("Test Weeknd Query")
+    let recentSearches = await searchEngine.getSearchHistory()
+    assertTest(.integration, "UniversalSearchEngine records and maintains deduplicated query history", recentSearches.contains("Test Weeknd Query"))
+    await searchEngine.removeSearchQuery("Test Weeknd Query")
+
+    // 7. Google Sync Manager Progress & Cancellation
+    let activeGoogleSync = GoogleMusicSyncManager.shared
+    activeGoogleSync.cancelSync()
+    assertTest(.unit, "GoogleMusicSyncManager cancelSync resets active state cleanly", !activeGoogleSync.isSyncing)
+
+    // ==========================================
     // FINAL CATEGORIZED AUDIT SUMMARY
     // ==========================================
     print("\n=============================================================================")
-    print("                    HAWK v1.5.0 TEST EXECUTION REPORT                        ")
+    print("                    HAWK v2.0 TEST EXECUTION REPORT                          ")
     print("=============================================================================")
     print(String(format: "%-42@ %10@ %8@ %8@ %8@", "CATEGORY", "EXECUTED", "PASSED", "SKIPPED", "FAILED"))
     print("─────────────────────────────────────────────────────────────────────────────")

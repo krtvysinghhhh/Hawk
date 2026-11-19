@@ -509,4 +509,39 @@ final class HawkSourcesTests: XCTestCase {
         XCTAssertFalse(manager.isConnected)
         XCTAssertNil(manager.accountEmail)
     }
+
+    func testArtworkResolutionURLUpgrades() {
+        let saavn150 = URL(string: "https://c.saavncdn.com/123/song-150x150.jpg")!
+        let saavnUpgraded = ArtworkResolver.upgradeResolution(of: saavn150)
+        XCTAssertEqual(saavnUpgraded.absoluteString, "https://c.saavncdn.com/123/song-500x500.jpg")
+
+        let saavn50 = URL(string: "https://c.saavncdn.com/123/song-50x50.jpg")!
+        let saavn50Upgraded = ArtworkResolver.upgradeResolution(of: saavn50)
+        XCTAssertEqual(saavn50Upgraded.absoluteString, "https://c.saavncdn.com/123/song-500x500.jpg")
+
+        let ytDefault = URL(string: "https://i.ytimg.com/vi/abc123xyz/default.jpg")!
+        let ytUpgraded = ArtworkResolver.upgradeResolution(of: ytDefault)
+        XCTAssertEqual(ytUpgraded.absoluteString, "https://i.ytimg.com/vi/abc123xyz/maxresdefault.jpg")
+
+        let appleMusic = URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/100x100bb.jpg")!
+        let appleUpgraded = ArtworkResolver.upgradeResolution(of: appleMusic)
+        XCTAssertEqual(appleUpgraded.absoluteString, "https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/600x600bb.jpg")
+    }
+
+    func testArtworkResolverCachingAndPruning() async {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ArtworkTest_\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let resolver = ArtworkResolver(customCacheDirectory: tempDir)
+        let dummyURL = URL(string: "https://c.saavncdn.com/test/dummy-150x150.jpg")!
+
+        let resolved = await resolver.resolveArtworkURL(for: Song(id: "art_1", title: "T", artist: "A", duration: 100, artworkURL: dummyURL))
+        XCTAssertEqual(resolved?.absoluteString, "https://c.saavncdn.com/test/dummy-500x500.jpg")
+
+        // Test clear caches
+        await resolver.clearMemoryCache()
+        await resolver.clearDiskCache()
+        let size = await resolver.diskCacheSize()
+        XCTAssertEqual(size, 0)
+    }
 }

@@ -21,8 +21,21 @@ public actor QueueManager {
     public private(set) var isShuffleActive: Bool = false
 
     private var originalContextQueue: [Song] = []
+    private let queueStateURL: URL
 
-    public init() {}
+    public init() {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        let url = docs.appendingPathComponent("hawk_queue_snapshot.json")
+        self.queueStateURL = url
+
+        if let loaded = Self.loadSnapshot(from: url) {
+            self.userQueue = loaded.userQueue
+            self.contextQueue = loaded.contextQueue
+            self.autoplayQueue = loaded.autoplayQueue
+            self.originalContextQueue = loaded.contextQueue
+            self.currentIndex = loaded.currentIndex
+        }
+    }
 
     /// Complete unified timeline in playback order: USER_QUEUE -> CONTEXT -> AUTOPLAY.
     public var fullTimeline: [Song] {
@@ -146,16 +159,72 @@ public actor QueueManager {
         return timeline[idx]
     }
 
-    // MARK: - Shuffle & Repeat
+    // MARK: - Smart Shuffle & Repeat
     public func toggleShuffle() {
         isShuffleActive.toggle()
         if isShuffleActive {
-            var shuffledContext = contextQueue
-            shuffledContext.shuffle()
-            contextQueue = shuffledContext
+            let current = currentSong
+            contextQueue = Self.smartShuffle(songs: contextQueue, keepCurrentAtStart: current)
         } else {
             contextQueue = originalContextQueue
         }
+        saveQueueState()
+    }
+
+    /// Smart shuffle distributes tracks by spacing identical artists apart and avoiding immediate repeats.
+    nonisolated public static func smartShuffle(songs: [Song], keepCurrentAtStart: Song? = nil) -> [Song] {
+        guard songs.count > 2 else { return songs }
+        var pool = songs
+        if let current = keepCurrentAtStart {
+            pool.removeAll { $0.id == current.id }
+        }
+        pool.shuffle()
+
+        var result: [Song] = []
+        if let current = keepCurrentAtStart {
+            result.append(current)
+        }
+
+        while !pool.isEmpty {
+            let lastArtist = result.last?.artist.lowercased()
+
+            // Group eligible songs by artist (not matching last played artist)
+            let eligible = pool.filter { $0.artist.lowercased() != lastArtist }
+            if !eligible.isEmpty {
+                // Pick from the artist with the highest remaining frequency in the entire pool
+                var counts: [String: Int] = [:]
+                for s in pool {
+                    counts[s.artist.lowercased(), default: 0] += 1
+                }
+                let chosenArtist = eligible.max { (counts[$0.artist.lowercased()] ?? 0) < (counts[$1.artist.lowercased()] ?? 0) }!.artist.lowercased()
+                if let index = pool.firstIndex(where: { $0.artist.lowercased() == chosenArtist }) {
+                    result.append(pool.remove(at: index))
+                }
+            } else {
+                // If only same artist remains, back-insert into result at a non-conflicting position
+                let candidate = pool.removeFirst()
+                let candidateArtist = candidate.artist.lowercased()
+                var inserted = false
+
+                let startIdx = keepCurrentAtStart != nil ? 1 : 0
+                if result.count > startIdx {
+                    for i in startIdx...result.count {
+                        let prevMatches = (i > 0 && result[i - 1].artist.lowercased() == candidateArtist)
+                        let nextMatches = (i < result.count && result[i].artist.lowercased() == candidateArtist)
+                        if !prevMatches && !nextMatches {
+                            result.insert(candidate, at: i)
+                            inserted = true
+                            break
+                        }
+                    }
+                }
+
+                if !inserted {
+                    result.append(candidate)
+                }
+            }
+        }
+        return result
     }
 
     public func toggleRepeat() {
@@ -164,10 +233,12 @@ public actor QueueManager {
         case .all: repeatMode = .one
         case .one: repeatMode = .off
         }
+        saveQueueState()
     }
 
     public func setRepeatMode(_ mode: RepeatMode) {
         self.repeatMode = mode
+        saveQueueState()
     }
 
     // MARK: - Track Removal & Reordering
@@ -190,6 +261,7 @@ public actor QueueManager {
         } else {
             currentIndex = 0
         }
+        saveQueueState()
     }
 
     public func moveUserQueueItem(fromOffsets source: IndexSet, toOffset destination: Int) {
@@ -202,6 +274,7 @@ public actor QueueManager {
         itemsToMove.reverse()
         let dest = min(destination, userQueue.count)
         userQueue.insert(contentsOf: itemsToMove, at: dest)
+        saveQueueState()
     }
 
     public func clearQueue() {
@@ -211,5 +284,45 @@ public actor QueueManager {
         originalContextQueue = []
         playHistory = []
         currentIndex = 0
+        saveQueueState()
+    }
+
+    // MARK: - Smart Continuation & Autoplay
+    /// Appends similar tracks to autoplay queue when nearing the end of current playlist.
+    public func triggerSmartContinuation(similarSongs: [Song]) {
+        let existingIds = Set(fullTimeline.map(\.id))
+        let fresh = similarSongs.filter { !existingIds.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        appendAutoplay(songs: fresh)
+        saveQueueState()
+    }
+
+    // MARK: - Queue State Snapshot Persistence
+    private struct QueueSnapshot: Codable {
+        let userQueue: [Song]
+        let contextQueue: [Song]
+        let autoplayQueue: [Song]
+        let currentIndex: Int
+    }
+
+    public func saveQueueState() {
+        let snapshot = QueueSnapshot(
+            userQueue: userQueue,
+            contextQueue: contextQueue,
+            autoplayQueue: autoplayQueue,
+            currentIndex: currentIndex
+        )
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? data.write(to: queueStateURL, options: .atomic)
+    }
+
+    private static func loadSnapshot(from url: URL) -> (userQueue: [Song], contextQueue: [Song], autoplayQueue: [Song], currentIndex: Int)? {
+        guard let data = try? Data(contentsOf: url),
+              let snapshot = try? JSONDecoder().decode(QueueSnapshot.self, from: data) else {
+            return nil
+        }
+        let totalCount = snapshot.userQueue.count + snapshot.contextQueue.count + snapshot.autoplayQueue.count
+        let validIdx = totalCount > 0 ? min(max(0, snapshot.currentIndex), totalCount - 1) : 0
+        return (snapshot.userQueue, snapshot.contextQueue, snapshot.autoplayQueue, validIdx)
     }
 }

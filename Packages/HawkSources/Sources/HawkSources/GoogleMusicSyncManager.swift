@@ -19,6 +19,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     public private(set) var syncStatusMessage: String?
     public private(set) var syncedPlaylistsCount: Int = 0
     public private(set) var syncedSongsCount: Int = 0
+    public private(set) var syncProgress: Double = 0.0
+    private var activeSyncTask: Task<Void, Never>?
 
     public var isAutoSyncEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "hawk_google_auto_sync") }
@@ -884,6 +886,14 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     }
 
     // MARK: - YouTube Music Library Synchronisation (Music-Only Scope & Robust Pagination)
+    public func cancelSync() {
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+        isSyncing = false
+        syncProgress = 0.0
+        syncStatusMessage = "Sync cancelled by user."
+    }
+
     public func syncNow() async {
         guard isConnected else {
             syncStatusMessage = "Not connected to Google"
@@ -891,6 +901,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         }
 
         isSyncing = true
+        syncProgress = 0.05
         syncStatusMessage = "Syncing YouTube Music library..."
 
         let token: String
@@ -908,7 +919,11 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             var totalSyncedPlaylists = 0
             var totalSyncedSongs = 0
 
-            for p in playlists {
+            let totalSteps = max(playlists.count + 1, 1)
+
+            for (index, p) in playlists.enumerated() {
+                try Task.checkCancellation()
+
                 let tracks: [Song]
                 do {
                     tracks = try await fetchPlaylistMusicTracks(playlistId: p.id, accessToken: token)
@@ -933,26 +948,43 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 }
                 totalSyncedPlaylists += 1
                 totalSyncedSongs += tracks.count
+
+                self.syncProgress = Double(index + 1) / Double(totalSteps)
+                self.syncStatusMessage = "Synced \(totalSyncedPlaylists) playlists (\(p.title))..."
             }
+
+            try Task.checkCancellation()
 
             // 2. Fetch Liked Music Tracks (Strict Category: Music)
             let likedTracks = try await fetchLikedMusic(accessToken: token)
             for track in likedTracks {
+                if Task.isCancelled { break }
                 _ = await PlaylistStore.shared.addSong(to: Playlist.favoritesId, song: track)
                 totalSyncedSongs += 1
             }
 
             self.syncedPlaylistsCount = totalSyncedPlaylists
             self.syncedSongsCount = totalSyncedSongs
+            self.syncProgress = 1.0
             self.lastSyncDate = Date()
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "hawk_google_last_sync_timestamp")
 
             self.syncStatusMessage = "Sync complete: \(totalSyncedPlaylists) playlists, \(totalSyncedSongs) tracks."
+        } catch is CancellationError {
+            self.syncStatusMessage = "Sync cancelled."
         } catch {
             self.syncStatusMessage = "Sync failed: \(error.localizedDescription)"
         }
 
         self.isSyncing = false
+    }
+
+    /// Retrieves all playlists imported from YouTube Music.
+    public func getYouTubeImportedPlaylists() async -> [Playlist] {
+        let all = await PlaylistStore.shared.getAllPlaylists()
+        return all.filter { playlist in
+            playlist.title.starts(with: "YT Music:") || playlist.songs.contains(where: { $0.sourceId == "youtube" })
+        }
     }
 
     private func fetchUserMusicPlaylists(accessToken: String) async throws -> [(id: String, title: String)] {
