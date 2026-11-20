@@ -702,4 +702,196 @@ final class HawkSourcesTests: XCTestCase {
         }
         XCTAssertEqual(kid, Self.testRsaKeyId)
     }
+
+    // MARK: - YouTube Import, Pagination & Merging Unit Tests
+
+    func testParsePlaylistsResponseWithPagination() throws {
+        let jsonString = """
+        {
+            "nextPageToken": "page_token_abc_123",
+            "items": [
+                {
+                    "id": "pl_1",
+                    "snippet": { "title": "Rock Classics" }
+                },
+                {
+                    "id": "pl_2",
+                    "snippet": { "title": "Study Beats" }
+                },
+                {
+                    "id": "pl_invalid"
+                }
+            ]
+        }
+        """
+        guard let data = jsonString.data(using: .utf8) else {
+            XCTFail("Failed to encode JSON")
+            return
+        }
+
+        let result = try GoogleMusicSyncManager.parsePlaylistsResponse(data: data)
+        XCTAssertEqual(result.nextPageToken, "page_token_abc_123")
+        XCTAssertEqual(result.playlists.count, 2)
+        XCTAssertEqual(result.playlists[0].id, "pl_1")
+        XCTAssertEqual(result.playlists[0].title, "YT Music: Rock Classics")
+        XCTAssertEqual(result.playlists[1].id, "pl_2")
+        XCTAssertEqual(result.playlists[1].title, "YT Music: Study Beats")
+    }
+
+    func testParsePlaylistsResponseEmpty() throws {
+        let jsonString = """
+        {
+            "items": []
+        }
+        """
+        guard let data = jsonString.data(using: .utf8) else {
+            XCTFail("Failed to encode JSON")
+            return
+        }
+
+        let result = try GoogleMusicSyncManager.parsePlaylistsResponse(data: data)
+        XCTAssertNil(result.nextPageToken)
+        XCTAssertTrue(result.playlists.isEmpty)
+    }
+
+    func testParsePlaylistTracksResponseFiltersDeletedAndNonMusic() throws {
+        let jsonString = """
+        {
+            "nextPageToken": "tracks_next_token",
+            "items": [
+                {
+                    "snippet": {
+                        "title": "Starboy",
+                        "videoOwnerChannelTitle": "The Weeknd - Topic",
+                        "thumbnails": {
+                            "high": { "url": "https://i.ytimg.com/vi/sb_vid_1/hqdefault.jpg" }
+                        }
+                    },
+                    "contentDetails": {
+                        "videoId": "sb_vid_1"
+                    }
+                },
+                {
+                    "snippet": {
+                        "title": "Private video",
+                        "channelTitle": "Unknown"
+                    },
+                    "contentDetails": {
+                        "videoId": "priv_vid_2"
+                    }
+                },
+                {
+                    "snippet": {
+                        "title": "Deleted video",
+                        "channelTitle": "Unknown"
+                    },
+                    "contentDetails": {
+                        "videoId": "del_vid_3"
+                    }
+                },
+                {
+                    "snippet": {
+                        "title": "Joe Rogan Podcast Episode 2000 Full Interview",
+                        "videoOwnerChannelTitle": "JRE Podcast Official",
+                        "thumbnails": {
+                            "high": { "url": "https://i.ytimg.com/vi/jre_vid_4/hqdefault.jpg" }
+                        }
+                    },
+                    "contentDetails": {
+                        "videoId": "jre_vid_4"
+                    }
+                }
+            ]
+        }
+        """
+        guard let data = jsonString.data(using: .utf8) else {
+            XCTFail("Failed to encode JSON")
+            return
+        }
+
+        let result = try GoogleMusicSyncManager.parsePlaylistTracksResponse(data: data)
+        XCTAssertEqual(result.nextPageToken, "tracks_next_token")
+        // Starboy is kept; private, deleted, and podcast are excluded
+        XCTAssertEqual(result.songs.count, 1)
+        let track = result.songs[0]
+        XCTAssertEqual(track.id, "sb_vid_1")
+        XCTAssertEqual(track.title, "Starboy")
+        XCTAssertEqual(track.artist, "The Weeknd")
+        XCTAssertEqual(track.sourceId, "youtube")
+        XCTAssertEqual(track.artworkURL?.absoluteString, "https://i.ytimg.com/vi/sb_vid_1/hqdefault.jpg")
+    }
+
+    func testLikedVideosResponseEmptyResults() throws {
+        let jsonString = """
+        {
+            "items": []
+        }
+        """
+        guard let data = jsonString.data(using: .utf8) else {
+            XCTFail("Failed to encode JSON")
+            return
+        }
+
+        let result = try GoogleMusicSyncManager.parseLikedVideosResponse(data: data)
+        XCTAssertNil(result.nextPageToken)
+        XCTAssertTrue(result.songs.isEmpty)
+    }
+
+    func testTrackMergingPreservesUserAdditionsAndDeduplicates() {
+        let local1 = Song(id: "local_1", title: "Local Indie Track", artist: "Indie Band", duration: 180)
+        let yt1 = Song(id: "yt_1", title: "Blinding Lights", artist: "The Weeknd", duration: 200, sourceId: "youtube")
+        let yt2 = Song(id: "yt_2", title: "Save Your Tears", artist: "The Weeknd", duration: 215, sourceId: "youtube")
+
+        let existing = [local1, yt1]
+        let incoming = [yt1, yt2] // yt1 is a duplicate remote track
+
+        let merged = GoogleMusicSyncManager.mergeTracks(existing: existing, incoming: incoming)
+        XCTAssertEqual(merged.count, 3)
+        XCTAssertEqual(merged[0].id, "local_1") // Local user addition preserved in place
+        XCTAssertEqual(merged[1].id, "yt_1")   // Existing track retained without duplication
+        XCTAssertEqual(merged[2].id, "yt_2")   // Novel incoming track appended
+    }
+
+    func testPlaylistStoreUpdateDoesNotDuplicatePlaylist() async {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("TestStore_\(UUID().uuidString).json")
+        defer {
+            try? FileManager.default.removeItem(at: tempURL)
+            try? FileManager.default.removeItem(at: tempURL.deletingPathExtension().appendingPathExtension("backup.json"))
+        }
+
+        let store = PlaylistStore(storageURL: tempURL)
+
+        let initialSong = Song(id: "init_1", title: "Initial Song", artist: "Artist A", duration: 180)
+        _ = await store.createPlaylist(title: "YT Music: Chill Hits", initialSongs: [initialSong])
+
+        var allPlaylists = await store.getAllPlaylists()
+        // Favorites + created playlist
+        let chillPlaylistsBefore = allPlaylists.filter { $0.title == "YT Music: Chill Hits" }
+        XCTAssertEqual(chillPlaylistsBefore.count, 1)
+        let initialPlaylistId = chillPlaylistsBefore[0].id
+
+        // Simulate re-sync: merge incoming tracks using updatePlaylist instead of createPlaylist
+        let incomingSong = Song(id: "in_2", title: "New Track", artist: "Artist B", duration: 200)
+        let match = allPlaylists.first(where: { $0.title == "YT Music: Chill Hits" })!
+        let mergedSongs = GoogleMusicSyncManager.mergeTracks(existing: match.songs, incoming: [initialSong, incomingSong])
+
+        await store.updatePlaylist(id: match.id, songs: mergedSongs)
+
+        allPlaylists = await store.getAllPlaylists()
+        let chillPlaylistsAfter = allPlaylists.filter { $0.title == "YT Music: Chill Hits" }
+        // CRITICAL RELEASE ASSERTION: exactly 1 playlist remains with that title (no duplicate UUIDs)
+        XCTAssertEqual(chillPlaylistsAfter.count, 1)
+        XCTAssertEqual(chillPlaylistsAfter[0].id, initialPlaylistId)
+        XCTAssertEqual(chillPlaylistsAfter[0].songs.count, 2)
+        XCTAssertEqual(chillPlaylistsAfter[0].songs.map(\.id), ["init_1", "in_2"])
+    }
+
+    @MainActor
+    func testSyncCancellationState() {
+        let manager = GoogleMusicSyncManager.shared
+        manager.cancelSync()
+        XCTAssertFalse(manager.isSyncing)
+        XCTAssertEqual(manager.syncStatusMessage, "Sync cancelled by user.")
+        XCTAssertEqual(manager.syncProgress, 0.0)
+    }
 }

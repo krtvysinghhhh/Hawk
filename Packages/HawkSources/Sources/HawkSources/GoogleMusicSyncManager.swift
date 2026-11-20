@@ -896,6 +896,18 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         syncStatusMessage = "Sync cancelled by user."
     }
 
+    /// Merges remote imported tracks into existing local tracks, deduplicating by canonicalKey and id,
+    /// preserving local user additions and track ordering.
+    nonisolated public static func mergeTracks(existing: [Song], incoming: [Song]) -> [Song] {
+        var merged = existing
+        for track in incoming {
+            if !merged.contains(where: { $0.canonicalKey == track.canonicalKey || $0.id == track.id }) {
+                merged.append(track)
+            }
+        }
+        return merged
+    }
+
     public func syncNow() async {
         guard isConnected else {
             syncStatusMessage = "Not connected to Google"
@@ -932,6 +944,10 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 let tracks: [Song]
                 do {
                     tracks = try await fetchPlaylistMusicTracks(playlistId: p.id, accessToken: token)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let authErr as HawkError {
+                    throw authErr
                 } catch {
                     // Soft error handling: preserve sync if an individual playlist fails
                     continue
@@ -941,13 +957,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 // Check existing playlists to avoid duplication and preserve local user additions
                 let existing = await PlaylistStore.shared.getAllPlaylists()
                 if let match = existing.first(where: { $0.title == p.title }) {
-                    var merged = match.songs
-                    for t in tracks {
-                        if !merged.contains(where: { $0.canonicalKey == t.canonicalKey || $0.id == t.id }) {
-                            merged.append(t)
-                        }
-                    }
-                    _ = await PlaylistStore.shared.createPlaylist(title: match.title, initialSongs: merged)
+                    let merged = Self.mergeTracks(existing: match.songs, incoming: tracks)
+                    await PlaylistStore.shared.updatePlaylist(id: match.id, songs: merged)
                 } else {
                     _ = await PlaylistStore.shared.createPlaylist(title: p.title, initialSongs: tracks)
                 }
@@ -965,7 +976,13 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             // 2. Fetch Liked Music Tracks (Strict Category: Music)
             let likedTracks = try await fetchLikedMusic(accessToken: token)
             if !likedTracks.isEmpty {
-                _ = await PlaylistStore.shared.createPlaylist(title: "YT Music: Liked Music", initialSongs: likedTracks)
+                let existing = await PlaylistStore.shared.getAllPlaylists()
+                if let match = existing.first(where: { $0.title == "YT Music: Liked Music" }) {
+                    let merged = Self.mergeTracks(existing: match.songs, incoming: likedTracks)
+                    await PlaylistStore.shared.updatePlaylist(id: match.id, songs: merged)
+                } else {
+                    _ = await PlaylistStore.shared.createPlaylist(title: "YT Music: Liked Music", initialSongs: likedTracks)
+                }
                 for track in likedTracks {
                     if isCancellationRequested || Task.isCancelled { break }
                     _ = await PlaylistStore.shared.addSong(to: Playlist.favoritesId, song: track)
@@ -998,6 +1015,87 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         }
     }
 
+    /// Parses YouTube Data API v3 `playlists.list?mine=true` JSON response.
+    nonisolated public static func parsePlaylistsResponse(data: Data) throws -> (playlists: [(id: String, title: String)], nextPageToken: String?) {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HawkError.decodeError("Invalid YouTube API JSON response")
+        }
+
+        let nextPageToken = json["nextPageToken"] as? String
+        guard let items = json["items"] as? [[String: Any]] else {
+            return ([], nextPageToken)
+        }
+
+        var playlists: [(id: String, title: String)] = []
+        for item in items {
+            guard let id = item["id"] as? String,
+                  let snippet = item["snippet"] as? [String: Any],
+                  let title = snippet["title"] as? String else { continue }
+            playlists.append((id: id, title: "YT Music: \(title)"))
+        }
+
+        return (playlists, nextPageToken)
+    }
+
+    /// Parses YouTube Data API v3 `playlistItems.list` JSON response.
+    /// Filters out deleted videos, private videos, and non-music items using multi-factor classification.
+    nonisolated public static func parsePlaylistTracksResponse(data: Data) throws -> (songs: [Song], nextPageToken: String?) {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HawkError.decodeError("Invalid YouTube API JSON response")
+        }
+
+        let nextPageToken = json["nextPageToken"] as? String
+        guard let items = json["items"] as? [[String: Any]] else {
+            return ([], nextPageToken)
+        }
+
+        var songs: [Song] = []
+        for item in items {
+            guard let snippet = item["snippet"] as? [String: Any],
+                  let title = snippet["title"] as? String,
+                  title != "Private video" && title != "Deleted video",
+                  let contentDetails = item["contentDetails"] as? [String: Any],
+                  let videoId = contentDetails["videoId"] as? String else { continue }
+
+            let channelTitle = snippet["videoOwnerChannelTitle"] as? String ?? snippet["channelTitle"] as? String ?? "Unknown Artist"
+            let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
+
+            // Multi-factor confidence classification: reject podcasts and non-music videos
+            let classificationResult = MusicClassificationService.classify(
+                title: title,
+                channelOrArtist: channelTitle,
+                duration: 210
+            )
+
+            guard classificationResult.classification.isPlayableSong else {
+                continue
+            }
+
+            var artworkURL: URL?
+            if let thumbs = snippet["thumbnails"] as? [String: Any] {
+                if let maxres = thumbs["maxres"] as? [String: Any], let urlStr = maxres["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let high = thumbs["high"] as? [String: Any], let urlStr = high["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let standard = thumbs["standard"] as? [String: Any], let urlStr = standard["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                }
+            }
+
+            let song = Song(
+                id: videoId,
+                title: title,
+                artist: artist,
+                duration: 210,
+                artworkURL: artworkURL,
+                sourceId: "youtube"
+            )
+            songs.append(song)
+        }
+
+        return (songs, nextPageToken)
+    }
+
     private func fetchUserMusicPlaylists(accessToken: String) async throws -> [(id: String, title: String)] {
         var playlists: [(id: String, title: String)] = []
         var nextPageToken: String? = nil
@@ -1005,6 +1103,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let maxPages = 5 // Fetch up to 250 playlists
 
         repeat {
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
+            }
             pageCount += 1
             var urlString = "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50"
             if let token = nextPageToken {
@@ -1018,31 +1119,35 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { break }
 
+            if http.statusCode == 401 {
+                throw HawkError.authRequired("Google access token expired or invalid (HTTP 401).")
+            }
+
             if http.statusCode == 403 {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 if let errorObj = json?["error"] as? [String: Any],
                    let errors = errorObj["errors"] as? [[String: Any]],
-                   let reason = errors.first?["reason"] as? String,
-                   reason == "quotaExceeded" || reason == "rateLimitExceeded" {
-                    throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                   let reason = errors.first?["reason"] as? String {
+                    if reason == "quotaExceeded" || reason == "rateLimitExceeded" {
+                        throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                    } else {
+                        let msg = errorObj["message"] as? String ?? reason
+                        throw HawkError.authRequired("YouTube API access forbidden (HTTP 403: \(msg)).")
+                    }
                 }
-                break
+                throw HawkError.authRequired("YouTube API access forbidden (HTTP 403).")
             }
 
-            guard (200...299).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let items = json["items"] as? [[String: Any]] else {
-                break
+            guard (200...299).contains(http.statusCode) else { break }
+
+            let parsed = try Self.parsePlaylistsResponse(data: data)
+            for p in parsed.playlists {
+                if !playlists.contains(where: { $0.id == p.id }) {
+                    playlists.append(p)
+                }
             }
 
-            for item in items {
-                guard let id = item["id"] as? String,
-                      let snippet = item["snippet"] as? [String: Any],
-                      let title = snippet["title"] as? String else { continue }
-                playlists.append((id: id, title: "YT Music: \(title)"))
-            }
-
-            nextPageToken = json["nextPageToken"] as? String
+            nextPageToken = parsed.nextPageToken
         } while nextPageToken != nil && pageCount < maxPages
 
         return playlists
@@ -1055,6 +1160,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let maxPages = 5 // Fetch up to 250 tracks per playlist
 
         repeat {
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
+            }
             pageCount += 1
             var urlString = "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=\(playlistId)&maxResults=50"
             if let token = nextPageToken {
@@ -1068,63 +1176,35 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { break }
 
+            if http.statusCode == 401 {
+                throw HawkError.authRequired("Google access token expired or invalid (HTTP 401).")
+            }
+
             if http.statusCode == 403 {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 if let errorObj = json?["error"] as? [String: Any],
                    let errors = errorObj["errors"] as? [[String: Any]],
-                   let reason = errors.first?["reason"] as? String,
-                   reason == "quotaExceeded" || reason == "rateLimitExceeded" {
-                    throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                   let reason = errors.first?["reason"] as? String {
+                    if reason == "quotaExceeded" || reason == "rateLimitExceeded" {
+                        throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                    } else {
+                        let msg = errorObj["message"] as? String ?? reason
+                        throw HawkError.authRequired("YouTube API access forbidden (HTTP 403: \(msg)).")
+                    }
                 }
-                break
+                throw HawkError.authRequired("YouTube API access forbidden (HTTP 403).")
             }
 
-            guard (200...299).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let items = json["items"] as? [[String: Any]] else {
-                break
+            guard (200...299).contains(http.statusCode) else { break }
+
+            let parsed = try Self.parsePlaylistTracksResponse(data: data)
+            for track in parsed.songs {
+                if !songs.contains(where: { $0.canonicalKey == track.canonicalKey || $0.id == track.id }) {
+                    songs.append(track)
+                }
             }
 
-            for item in items {
-                guard let snippet = item["snippet"] as? [String: Any],
-                      let title = snippet["title"] as? String,
-                      title != "Private video" && title != "Deleted video",
-                      let contentDetails = item["contentDetails"] as? [String: Any],
-                      let videoId = contentDetails["videoId"] as? String else { continue }
-
-                let channelTitle = snippet["videoOwnerChannelTitle"] as? String ?? snippet["channelTitle"] as? String ?? "Unknown Artist"
-                let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
-
-                // Multi-factor confidence classification: reject podcasts and non-music videos
-                let classificationResult = MusicClassificationService.classify(
-                    title: title,
-                    channelOrArtist: channelTitle,
-                    duration: 210
-                )
-
-                guard classificationResult.classification.isPlayableSong else {
-                    continue
-                }
-
-                var artworkURL: URL?
-                if let thumbs = snippet["thumbnails"] as? [String: Any],
-                   let high = thumbs["high"] as? [String: Any],
-                   let urlStr = high["url"] as? String {
-                    artworkURL = URL(string: urlStr)
-                }
-
-                let song = Song(
-                    id: videoId,
-                    title: title,
-                    artist: artist,
-                    duration: 210,
-                    artworkURL: artworkURL,
-                    sourceId: "youtube"
-                )
-                songs.append(song)
-            }
-
-            nextPageToken = json["nextPageToken"] as? String
+            nextPageToken = parsed.nextPageToken
         } while nextPageToken != nil && pageCount < maxPages
 
         return songs
@@ -1233,6 +1313,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let maxPages = 5 // Fetch up to 250 liked songs
 
         repeat {
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
+            }
             pageCount += 1
             // Official YouTube Data API v3: myRating=like returns all user liked videos.
             // videoCategoryId is mutually exclusive with myRating in videos.list and cannot be passed in query params.
@@ -1248,15 +1331,23 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { break }
 
+            if http.statusCode == 401 {
+                throw HawkError.authRequired("Google access token expired or invalid (HTTP 401).")
+            }
+
             if http.statusCode == 403 {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 if let errorObj = json?["error"] as? [String: Any],
                    let errors = errorObj["errors"] as? [[String: Any]],
-                   let reason = errors.first?["reason"] as? String,
-                   reason == "quotaExceeded" || reason == "rateLimitExceeded" {
-                    throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                   let reason = errors.first?["reason"] as? String {
+                    if reason == "quotaExceeded" || reason == "rateLimitExceeded" {
+                        throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                    } else {
+                        let msg = errorObj["message"] as? String ?? reason
+                        throw HawkError.authRequired("YouTube API access forbidden (HTTP 403: \(msg)).")
+                    }
                 }
-                break
+                throw HawkError.authRequired("YouTube API access forbidden (HTTP 403).")
             }
 
             guard (200...299).contains(http.statusCode) else {
@@ -1264,7 +1355,11 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             }
 
             let result = try Self.parseLikedVideosResponse(data: data)
-            songs.append(contentsOf: result.songs)
+            for track in result.songs {
+                if !songs.contains(where: { $0.canonicalKey == track.canonicalKey || $0.id == track.id }) {
+                    songs.append(track)
+                }
+            }
             nextPageToken = result.nextPageToken
         } while nextPageToken != nil && pageCount < maxPages
 

@@ -23,9 +23,14 @@ public actor QueueManager {
     private var originalContextQueue: [Song] = []
     private let queueStateURL: URL
 
-    public init() {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
-        let url = docs.appendingPathComponent("hawk_queue_snapshot.json")
+    public init(storageURL: URL? = nil) {
+        let url: URL
+        if let customUrl = storageURL {
+            url = customUrl
+        } else {
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+            url = docs.appendingPathComponent("hawk_queue_snapshot.json")
+        }
         self.queueStateURL = url
 
         if let loaded = Self.loadSnapshot(from: url) {

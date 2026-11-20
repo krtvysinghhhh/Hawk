@@ -112,7 +112,10 @@ final class HawkPlaybackTests: XCTestCase {
     }
 
     func testQueueManualReordering() async {
-        let q = QueueManager()
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("test_queue_\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let q = QueueManager(storageURL: tempURL)
         let song1 = Song(id: "s1", title: "Track 1", artist: "Artist A")
         let song2 = Song(id: "s2", title: "Track 2", artist: "Artist B")
         let song3 = Song(id: "s3", title: "Track 3", artist: "Artist C")
