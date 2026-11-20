@@ -25,8 +25,8 @@ targets:
         CFBundleDisplayName: HAWK
         CFBundleName: HAWK
         CFBundleIdentifier: com.hawk.music
-        CFBundleShortVersionString: 1.4.0
-        CFBundleVersion: '6'
+        CFBundleShortVersionString: 1.5.0
+        CFBundleVersion: '7'
         CFBundleURLTypes:
         - CFBundleTypeRole: Editor
           CFBundleURLName: com.hawk.music
@@ -37,6 +37,7 @@ targets:
           CFBundleURLSchemes:
           - com.googleusercontent.apps.862376793952-pdvpt1139kcf2mdgpkrqrol2av0ks58d
         LSRequiresIPhoneOS: true
+        UIRequiresFullScreen: true
         UIBackgroundModes:
         - audio
         UILaunchScreen: {}
@@ -44,6 +45,11 @@ targets:
         - arm64
         UISupportedInterfaceOrientations:
         - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+        - UIInterfaceOrientationPortrait
+        - UIInterfaceOrientationPortraitUpsideDown
+        - UIInterfaceOrientationLandscapeLeft
+        - UIInterfaceOrientationLandscapeRight
         NSAppleMusicUsageDescription: HAWK uses Apple Music to play songs and search
           the music catalog.
         NSAppTransportSecurity:

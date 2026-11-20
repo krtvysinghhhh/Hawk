@@ -185,29 +185,41 @@ public struct GoogleYouTubeMusicSettingsView: View {
                                 .cornerRadius(12)
 
                             case .ready(let clientId, let scheme, _):
-                                HStack {
-                                    Image(systemName: "checkmark.seal.fill")
-                                        .foregroundColor(.green)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Client ID Ready & Registered")
-                                            .font(.caption)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(HawkTheme.textPrimary)
-                                        Text(clientId)
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundColor(HawkTheme.textTertiary)
-                                            .lineLimit(1)
-                                        Text("Scheme: \(scheme)")
-                                            .font(.system(size: 9, design: .monospaced))
-                                            .foregroundColor(HawkTheme.textTertiary)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "checkmark.seal.fill")
+                                            .foregroundColor(.green)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Client ID Ready & Registered")
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(HawkTheme.textPrimary)
+                                            Text(clientId)
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundColor(HawkTheme.textTertiary)
+                                                .lineLimit(1)
+                                            Text("Scheme: \(scheme)")
+                                                .font(.system(size: 9, design: .monospaced))
+                                                .foregroundColor(HawkTheme.textTertiary)
+                                        }
+                                        Spacer()
+                                        Button("Edit") {
+                                            customClientIdInput = syncManager.configuredClientId ?? ""
+                                            showClientIdSheet = true
+                                        }
+                                        .font(.caption)
+                                        .foregroundColor(HawkTheme.primaryAccent)
                                     }
-                                    Spacer()
-                                    Button("Edit") {
-                                        customClientIdInput = syncManager.configuredClientId ?? ""
-                                        showClientIdSheet = true
+
+                                    HStack(alignment: .top, spacing: 6) {
+                                        Image(systemName: "info.circle")
+                                            .font(.caption2)
+                                            .foregroundColor(HawkTheme.textSecondary)
+                                            .padding(.top, 1)
+                                        Text("Note on 403 access_denied: If your Google Cloud app is in 'Testing' mode, Google restricts access to approved testers. Add your signing-in Google email under 'OAuth consent screen → Test users' in Google Cloud Console.")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(HawkTheme.textSecondary)
                                     }
-                                    .font(.caption)
-                                    .foregroundColor(HawkTheme.primaryAccent)
                                 }
                                 .padding(10)
                                 .background(HawkTheme.cardBackground)
@@ -417,7 +429,7 @@ public struct GoogleYouTubeMusicSettingsView: View {
 
                             checklistRow(number: "1", text: "Go to console.cloud.google.com and select your project.")
                             checklistRow(number: "2", text: "Enable 'YouTube Data API v3' in APIs & Services.")
-                            checklistRow(number: "3", text: "Configure OAuth Consent Screen (add your email to Test Users).")
+                            checklistRow(number: "3", text: "In OAuth Consent Screen: Add your signing-in Google email to 'Test users' (Prevents 403: access_denied).")
                             checklistRow(number: "4", text: "Go to Credentials → Create Credentials → OAuth Client ID.")
                             checklistRow(number: "5", text: "Select Application Type: iOS.")
                             checklistRow(number: "6", text: "Set Bundle ID: com.hawk.music")

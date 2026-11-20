@@ -1,5 +1,6 @@
 import Foundation
 import HawkCore
+import HawkSecurity
 
 public enum DownloadState: Sendable, Equatable {
     case idle
@@ -86,9 +87,30 @@ public actor DownloadManager {
         return .idle
     }
 
+    // MARK: - Sanitization Helpers
+    /// Sanitizes song identifier and validates media extension for sandboxed filesystem storage.
+    public static func sanitizeDownloadFilename(songId: String, streamURL: URL) -> String {
+        let safeId = songId
+            .replacingOccurrences(of: "..", with: "")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "_")
+        let baseId = safeId.isEmpty ? String(CryptoUtils.sha256Hex(songId).prefix(16)) : safeId
+        let rawExt = streamURL.pathExtension.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+        let validAudioExtensions: Set<String> = ["m4a", "mp3", "flac", "wav", "aac", "ogg", "alac", "opus"]
+        let fileExtension = validAudioExtensions.contains(rawExt) ? rawExt : "m4a"
+        return "\(baseId).\(fileExtension)"
+    }
+
     // MARK: - Download Lifecycle
     public func download(song: Song) async throws {
         if isDownloaded(songId: song.id) {
+            return
+        }
+
+        // Prevent duplicate simultaneous downloads: await in-flight task if already running
+        if let existingTask = activeDownloadTasks[song.id] {
+            try await existingTask.value
             return
         }
 
@@ -103,9 +125,8 @@ public actor DownloadManager {
 
             await self.updateState(songId: song.id, state: .downloading(progress: 0.25))
 
-            let safeId = song.id.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
-            let fileExtension = stream.url.pathExtension.isEmpty ? "m4a" : stream.url.pathExtension
-            let destinationURL = self.downloadsDirectory.appendingPathComponent("\(safeId).\(fileExtension)")
+            let filename = Self.sanitizeDownloadFilename(songId: song.id, streamURL: stream.url)
+            let destinationURL = self.downloadsDirectory.appendingPathComponent(filename)
 
             // 2. Fetch media bytes
             let (tempURL, response) = try await URLSession.shared.download(from: stream.url)

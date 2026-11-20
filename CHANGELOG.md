@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] - 2026-11-16
+
+### Fixed (P0 Swift 6 CI Compiler Solver Timeouts)
+- **Resolved Swift 6 Constraint Solver Failures:**
+  - Decomposed complex monolithic SwiftUI view hierarchy in `GenreCardView` and `MainTabView` that previously caused compiler solver timeouts (`run 41777855746`).
+  - Extracted typed computed properties (`backgroundFill`, `borderGradient`, `shadowColor`) in `HawkColors.swift`.
+  - Added `@MainActor` isolation to `configureSystemAppearance()`.
+
+### Fixed (P1 Audio Engine Standby Bleed & Crossfade Race Conditions)
+- **Standby Player Teardown & Crossfade Synchronization:**
+  - Added `stopStandbyPlayer()` to synchronously pause and clear the standby `AVPlayerItem` on interruptions, track switches, or manual pauses.
+  - Implemented monotonic `activePlayRequestId` guard in `HawkAudioEngine` to discard obsolete asynchronous stream resolutions and crossfades.
+  - Added explicit cancellation handling in `executeCrossfade()` to ensure outgoing audio volume is zeroed immediately if cancelled.
+
+### Hardened (P1 Security & Concurrency Refinement)
+- **Eliminated Ephemeral URLSession Resource & Socket Leaks:**
+  - Added `defer { session.invalidateAndCancel() }` in `UniversalPlaylistImporter.fetchTracksFromURL()` to prevent delegate retain cycles and file descriptor leaks.
+- **Path Traversal & Dotfile Prevention in Offline Storage:**
+  - Implemented `DownloadManager.sanitizeDownloadFilename(songId:streamURL:)` with SHA-256 fallback for symbol-only track identifiers and enforced an audio extension whitelist (`m4a`, `mp3`, `flac`, `wav`, `aac`, `ogg`, `alac`, `opus`).
+- **Eliminated Track Matching Anagram False Positives:**
+  - Hardened string comparison in `TrackMatcher` using token similarity and strict artist boundary validation.
+- **Dynamic In-App Versioning:**
+  - Substituted hardcoded version strings in `LibraryViews.swift` and `LyricsEngine.swift` with dynamic `CFBundleShortVersionString` reflection.
+
+### Added (Testing Infrastructure & Dual-Harness QA)
+- **Registered 7 SwiftPM XCTest Targets:** Added `HawkCoreTests`, `HawkSecurityTests`, `HawkNetworkingTests`, `HawkSourcesTests`, `HawkPlaybackTests`, `HawkLyricsTests`, and `HawkStatsTests` to `Package.swift`.
+- **Integrated Regression Coverage:** Added automated unit tests for download filename traversal and socket teardown.
+- **Master Verification Runner:** Verified all 178 system assertions in `HawkVerify` passing cleanly.
+
+---
+
 ## [1.4.0] - 2026-11-04
 
 ### Fixed (P0 Google OAuth 401 invalid_client & RFC 8252 Compliance)

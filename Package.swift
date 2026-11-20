@@ -80,6 +80,41 @@ let package = Package(
                 "HawkUI"
             ],
             path: "Tests/HawkVerify"
+        ),
+        .testTarget(
+            name: "HawkCoreTests",
+            dependencies: ["HawkCore"],
+            path: "Tests/HawkCoreTests"
+        ),
+        .testTarget(
+            name: "HawkSecurityTests",
+            dependencies: ["HawkCore", "HawkSecurity"],
+            path: "Tests/HawkSecurityTests"
+        ),
+        .testTarget(
+            name: "HawkNetworkingTests",
+            dependencies: ["HawkCore", "HawkNetworking"],
+            path: "Tests/HawkNetworkingTests"
+        ),
+        .testTarget(
+            name: "HawkSourcesTests",
+            dependencies: ["HawkCore", "HawkSources", "HawkSecurity", "HawkNetworking"],
+            path: "Tests/HawkSourcesTests"
+        ),
+        .testTarget(
+            name: "HawkPlaybackTests",
+            dependencies: ["HawkCore", "HawkPlayback"],
+            path: "Tests/HawkPlaybackTests"
+        ),
+        .testTarget(
+            name: "HawkLyricsTests",
+            dependencies: ["HawkCore", "HawkLyrics"],
+            path: "Tests/HawkLyricsTests"
+        ),
+        .testTarget(
+            name: "HawkStatsTests",
+            dependencies: ["HawkCore", "HawkStats"],
+            path: "Tests/HawkStatsTests"
         )
     ]
 )

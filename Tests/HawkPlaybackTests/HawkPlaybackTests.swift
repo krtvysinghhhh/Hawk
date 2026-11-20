@@ -47,4 +47,90 @@ final class HawkPlaybackTests: XCTestCase {
         XCTAssertEqual(eq.currentPreset.name, "Bass Booster")
         XCTAssertEqual(eq.customGains[0], 6.0)
     }
+
+    func testCrossfadeDurationClamping() async {
+        let engine = HawkAudioEngine()
+        await engine.setCrossfadeDuration(25.0)
+        let dur = await engine.crossfadeDuration
+        XCTAssertEqual(dur, 12.0)
+
+        await engine.setCrossfadeDuration(-5.0)
+        let durMin = await engine.crossfadeDuration
+        XCTAssertEqual(durMin, 0.0)
+    }
+
+    func testPlaybackStateTransitions() async {
+        let engine = HawkAudioEngine()
+        let initial = await engine.playbackState
+        XCTAssertFalse(initial.isPlaying)
+
+        await engine.pause()
+        let pausedState = await engine.playbackState
+        XCTAssertFalse(pausedState.isPlaying)
+    }
+
+    func testStopResetsPlaybackStateToIdleAndClearsPlayers() async {
+        let engine = HawkAudioEngine()
+        await engine.stop()
+        let state = await engine.playbackState
+        XCTAssertEqual(state, .idle)
+        let standbyItem = await engine.standbyPlayerItem
+        XCTAssertNil(standbyItem)
+        let isStandbyPlaying = await engine.isStandbyPlaying
+        XCTAssertFalse(isStandbyPlaying)
+    }
+
+    func testPauseStopsStandbyPlayer() async {
+        let engine = HawkAudioEngine()
+        await engine.pause()
+        let isStandbyPlaying = await engine.isStandbyPlaying
+        XCTAssertFalse(isStandbyPlaying)
+    }
+
+    func testMonotonicPlayRequestIdIncrements() async {
+        let engine = HawkAudioEngine()
+        let initialId = await engine.activePlayRequestId
+        let song1 = Song(id: "s1", title: "Song 1", artist: "Artist 1")
+        // Invoking play on invalid media will reject/fail but advance request ID
+        try? await engine.play(song: song1)
+        let nextId = await engine.activePlayRequestId
+        XCTAssertGreaterThan(nextId, initialId)
+    }
+
+    func testQueueSnapshotCorruptedFileGracefulHandling() {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let corruptedURL = tempDir.appendingPathComponent("corrupted_snapshot.json")
+        let invalidData = "{\n  \"invalid\": [broken json format\n".data(using: .utf8)!
+        try! invalidData.write(to: corruptedURL)
+
+        // Must fail safe and return nil without crashing
+        let result = QueueManager.loadSnapshot(from: corruptedURL)
+        XCTAssertNil(result)
+    }
+
+    func testQueueManualReordering() async {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("test_queue_\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let q = QueueManager(storageURL: tempURL)
+        let song1 = Song(id: "s1", title: "Track 1", artist: "Artist A")
+        let song2 = Song(id: "s2", title: "Track 2", artist: "Artist B")
+        let song3 = Song(id: "s3", title: "Track 3", artist: "Artist C")
+
+        await q.addToQueue(song: song1)
+        await q.addToQueue(song: song2)
+        await q.addToQueue(song: song3)
+
+        // Move first item (s1) to index 3 (end of queue)
+        await q.moveUserQueueItem(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+
+        let userQ = await q.userQueue
+        XCTAssertEqual(userQ.count, 3)
+        XCTAssertEqual(userQ[0].id, "s2")
+        XCTAssertEqual(userQ[1].id, "s3")
+        XCTAssertEqual(userQ[2].id, "s1")
+    }
 }

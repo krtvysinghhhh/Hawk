@@ -360,6 +360,7 @@ public enum UniversalPlaylistImporter {
         config.timeoutIntervalForResource = maxTimeoutInterval
         let delegate = SafeRedirectSessionDelegate()
         let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
 
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {

@@ -29,7 +29,7 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
 
         let headers = standardHeaders()
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "context": [
                 "client": [
                     "clientName": "WEB_REMIX",
@@ -40,6 +40,19 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             ],
             "query": query
         ]
+
+        switch filter {
+        case .songs:
+            body["params"] = "EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D"
+        case .albums:
+            body["params"] = "EgWKAQIBAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D"
+        case .artists:
+            body["params"] = "EgWKAQIgAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D"
+        case .playlists:
+            body["params"] = "EgWKAQIoAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D"
+        case .all:
+            break
+        }
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
             throw HawkError.decodeError("Failed to serialize search payload")
@@ -101,20 +114,49 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             body: bodyData
         )
 
+        if response.statusCode == 401 || response.statusCode == 403 {
+            throw HawkError.authRequired("YouTube Music streaming restricted or login required")
+        }
+        if response.statusCode == 429 {
+            throw HawkError.networkError("YouTube Music rate limit reached (HTTP 429)")
+        }
         guard (200...299).contains(response.statusCode) else {
             throw HawkError.invalidResponse(response.statusCode)
         }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let streamingData = json["streamingData"] as? [String: Any],
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HawkError.decodeError("Malformed JSON response from YouTube Player API")
+        }
+
+        if let playabilityStatus = json["playabilityStatus"] as? [String: Any],
+           let status = playabilityStatus["status"] as? String, status != "OK" {
+            let reason = playabilityStatus["reason"] as? String ?? "Track is unplayable"
+            if status == "LOGIN_REQUIRED" {
+                throw HawkError.authRequired("Content requires authentication: \(reason)")
+            } else {
+                throw HawkError.streamNotFound("\(song.id): \(reason)")
+            }
+        }
+
+        guard let streamingData = json["streamingData"] as? [String: Any],
               let adaptiveFormats = streamingData["adaptiveFormats"] as? [[String: Any]] else {
             throw HawkError.streamNotFound(song.id)
         }
 
-        // Filter and pick highest bitrate audio format conforming to quality ceiling
+        // Filter valid audio MIME types and unexpired stream URLs
+        let now = Date().timeIntervalSince1970
         let audioFormats = adaptiveFormats.filter { format in
-            guard let mimeType = format["mimeType"] as? String else { return false }
-            return mimeType.hasPrefix("audio/")
+            guard let mimeType = format["mimeType"] as? String,
+                  mimeType.hasPrefix("audio/") else { return false }
+            guard let urlString = format["url"] as? String,
+                  let streamURL = URL(string: urlString) else { return false }
+            if let components = URLComponents(url: streamURL, resolvingAgainstBaseURL: false),
+               let expireItem = components.queryItems?.first(where: { $0.name == "expire" }),
+               let expireVal = expireItem.value,
+               let expireTimestamp = Double(expireVal) {
+                if expireTimestamp <= now { return false }
+            }
+            return true
         }
 
         let sorted = audioFormats.sorted { f1, f2 in
@@ -123,6 +165,7 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             return b1 > b2
         }
 
+        // Select the best available format strictly within quality ceiling
         for format in sorted {
             guard let urlString = format["url"] as? String,
                   let streamURL = URL(string: urlString) else { continue }
@@ -132,26 +175,15 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
             if bitrate <= qualityCeiling.maxKbps {
                 return SourceStream(
                     url: streamURL,
-                    quality: bitrate >= 256 ? .high : .standard,
+                    quality: bitrate >= 256 ? .high : (bitrate >= 128 ? .standard : .low),
                     mimeType: mimeType,
                     sourceId: sourceId
                 )
             }
         }
 
-        // Fallback to first available format
-        if let first = sorted.first,
-           let urlString = first["url"] as? String,
-           let streamURL = URL(string: urlString) {
-            return SourceStream(
-                url: streamURL,
-                quality: .standard,
-                mimeType: first["mimeType"] as? String ?? "audio/mp4",
-                sourceId: sourceId
-            )
-        }
-
-        throw HawkError.streamNotFound(song.id)
+        // Never knowingly exceed the requested quality ceiling.
+        throw HawkError.streamNotFound("No valid audio stream available conforming to \(qualityCeiling.displayName) ceiling")
     }
 
     // MARK: - Private Helpers
@@ -171,12 +203,14 @@ public final class YouTubeSource: MusicSourceProvider, @unchecked Sendable {
         }
 
         var results: [Song] = []
+        var seenIds = Set<String>()
 
         // Navigate YouTube Music sectionListRenderer / musicShelfRenderer JSON tree
         func traverse(obj: Any) {
             if let dict = obj as? [String: Any] {
                 if let renderer = dict["musicResponsiveListItemRenderer"] as? [String: Any] {
-                    if let song = extractSong(from: renderer) {
+                    if let song = extractSong(from: renderer), !seenIds.contains(song.id) {
+                        seenIds.insert(song.id)
                         results.append(song)
                     }
                 } else {

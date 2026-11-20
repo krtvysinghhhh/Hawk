@@ -115,8 +115,7 @@ public struct MainTabView: View {
 // MARK: - Live Home View
 struct HomeView: View {
     @State private var trendingSongs: [Song] = []
-    @State private var madeForYouSongs: [Song] = []
-    @State private var jumpBackInSongs: [Song] = []
+    @State private var recommendationShelves: [RecommendationShelf] = []
     @State private var topHits: [Song] = []
     @State private var featuredSong: Song?
     @State private var isLoading = true
@@ -145,7 +144,7 @@ struct HomeView: View {
             ZStack {
                 HawkTheme.darkBackground.ignoresSafeArea()
 
-                if isLoading && trendingSongs.isEmpty {
+                if isLoading && trendingSongs.isEmpty && recommendationShelves.isEmpty {
                     VStack(spacing: 16) {
                         ProgressView()
                             .tint(HawkTheme.primaryAccent)
@@ -166,7 +165,7 @@ struct HomeView: View {
                                     Text("Handcrafted for you on HAWK")
                                         .font(.system(size: 14, weight: .medium))
                                         .foregroundColor(HawkTheme.textTertiary)
-                                }
+                                    }
                                 Spacer()
                                 Image("hawk-logo", bundle: .main)
                                     .resizable()
@@ -194,25 +193,16 @@ struct HomeView: View {
                                 .padding(.horizontal, 20)
                             }
 
-                            // Section 1: Jump Back In / Favorites
-                            if !jumpBackInSongs.isEmpty {
+                            // Dynamic Personalized Discovery Shelves (From RecommendationEngine)
+                            ForEach(recommendationShelves) { shelf in
                                 carouselSection(
-                                    title: "Jump Back In",
-                                    subtitle: "Pick up where you left off",
-                                    songs: jumpBackInSongs
+                                    title: shelf.title,
+                                    subtitle: shelf.subtitle,
+                                    songs: shelf.tracks
                                 )
                             }
 
-                            // Section 2: Made For You (1:1 Artwork Carousel)
-                            if !madeForYouSongs.isEmpty {
-                                carouselSection(
-                                    title: "Made For You",
-                                    subtitle: "Personalised daily mix",
-                                    songs: madeForYouSongs
-                                )
-                            }
-
-                            // Section 3: Popular Artists (Circular Avatars)
+                            // Popular Artists (Circular Avatars)
                             VStack(alignment: .leading, spacing: 14) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Favorite Artists")
@@ -270,7 +260,7 @@ struct HomeView: View {
                                 }
                             }
 
-                            // Section 4: Global Hits & Trending
+                            // Trending Worldwide
                             if !trendingSongs.isEmpty {
                                 carouselSection(
                                     title: "Trending Worldwide",
@@ -279,7 +269,7 @@ struct HomeView: View {
                                 )
                             }
 
-                            // Section 5: Top Charts List
+                            // Top Charts List
                             if !topHits.isEmpty {
                                 VStack(alignment: .leading, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -320,7 +310,7 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             #endif
             .task {
-                if trendingSongs.isEmpty {
+                if trendingSongs.isEmpty && recommendationShelves.isEmpty {
                     await loadHomeData()
                 }
             }
@@ -350,6 +340,49 @@ struct HomeView: View {
                         }
                         .buttonStyle(.plain)
                         .hawkPressEffect()
+                        .contextMenu {
+                            Button {
+                                coordinator.play(song: song, context: songs)
+                            } label: {
+                                Label("Play Now", systemImage: "play")
+                            }
+
+                            Button {
+                                Task {
+                                    await QueueManager.shared.playNext(song: song)
+                                }
+                            } label: {
+                                Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                            }
+
+                            Button {
+                                Task {
+                                    await QueueManager.shared.addToQueue(song: song)
+                                }
+                            } label: {
+                                Label("Add to Queue", systemImage: "text.badge.plus")
+                            }
+
+                            Divider()
+
+                            Button {
+                                Task {
+                                    _ = await PlaylistStore.shared.toggleFavorite(song: song)
+                                    await loadHomeData()
+                                }
+                            } label: {
+                                Label("Favorite", systemImage: "heart")
+                            }
+
+                            Button(role: .destructive) {
+                                Task {
+                                    await RecommendationEngine.shared.dislikeTrack(songId: song.id)
+                                    await loadHomeData()
+                                }
+                            } label: {
+                                Label("Hide / Dislike Recommendation", systemImage: "hand.thumbsdown")
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -360,32 +393,33 @@ struct HomeView: View {
     private func loadHomeData() async {
         isLoading = true
 
-        // Load favorites from local PlaylistStore
+        let history = await ListeningStatsRecorder.shared.getRecentlyPlayed()
         let favs = await PlaylistStore.shared.getFavorites().songs
+        let librarySongs = await LibraryAggregator.shared.allLibrarySongs()
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM"
+        let monthKey = formatter.string(from: Date())
+        let bucket = await ListeningStatsRecorder.shared.getMonthlyReplay(monthKey: monthKey)
+
+        let shelves = await RecommendationEngine.shared.generateShelves(
+            history: history,
+            favorites: favs,
+            librarySongs: librarySongs,
+            monthlyBucket: bucket
+        )
+        self.recommendationShelves = shelves
 
         async let saavnTrending = (try? JioSaavnSource().search(query: "Top Hits 2026")) ?? []
         async let ytTrending = (try? YouTubeSource().search(query: "Top Global Hits")) ?? []
-        async let popMix = (try? JioSaavnSource().search(query: "Global Pop Hits")) ?? []
 
-        let (saavn, yt, pop) = await (saavnTrending, ytTrending, popMix)
-
+        let (saavn, yt) = await (saavnTrending, ytTrending)
         let dedupedTrending = TrackDeduplicator.deduplicate(saavn + yt)
-        let dedupedPop = TrackDeduplicator.deduplicate(pop + yt)
 
         self.trendingSongs = dedupedTrending
-        self.madeForYouSongs = dedupedPop
-        self.topHits = TrackDeduplicator.deduplicate(yt + saavn)
-        self.featuredSong = dedupedTrending.first ?? dedupedPop.first
+        self.topHits = dedupedTrending
+        self.featuredSong = shelves.first?.tracks.first ?? dedupedTrending.first
 
-        // Jump Back In uses actual listening history, falling back to favorites or top trending
-        let history = await ListeningStatsRecorder.shared.getRecentlyPlayed()
-        if !history.isEmpty {
-            self.jumpBackInSongs = history
-        } else if !favs.isEmpty {
-            self.jumpBackInSongs = favs
-        } else {
-            self.jumpBackInSongs = Array(dedupedTrending.prefix(6))
-        }
         self.isLoading = false
     }
 }
@@ -422,17 +456,17 @@ struct FeaturedHeroView: View {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("FEATURED TRACK")
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(HawkTypography.caption2.weight(.heavy))
                         .foregroundColor(HawkTheme.primaryAccent)
                         .tracking(1.2)
 
                     Text(song.title)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(HawkTypography.title3.weight(.bold))
                         .foregroundColor(.white)
                         .lineLimit(1)
 
                     Text(song.artist)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(HawkTypography.subheadline.weight(.medium))
                         .foregroundColor(.white.opacity(0.8))
                         .lineLimit(1)
                 }
@@ -465,16 +499,60 @@ struct FeaturedHeroView: View {
 }
 
 // MARK: - Live Explore View
+struct GenreCategory: Identifiable {
+    let id = UUID()
+    let name: String
+    let icon: String
+    let query: String
+    let color: Color
+}
+
+struct GenreCardView: View {
+    let genre: GenreCategory
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            LinearGradient(
+                colors: [genre.color.opacity(0.8), genre.color.opacity(0.4)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .frame(height: 100)
+            .cornerRadius(12)
+
+            HStack {
+                VStack(alignment: .leading) {
+                    Spacer()
+                    Text(genre.name)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(12)
+                }
+                Spacer()
+                Image(systemName: genre.icon)
+                    .font(.system(size: 28))
+                    .foregroundColor(.white.opacity(0.35))
+                    .padding(12)
+            }
+        }
+    }
+}
+
 struct ExploreView: View {
-    private let genres = [
-        ("Pop Hits", "music.note", "Pop Hits", Color.purple),
-        ("Hip-Hop & Rap", "flame.fill", "Hip Hop Hits", Color.orange),
-        ("Rock & Metal", "guitars.fill", "Rock Hits", Color.red),
-        ("Chill & Lo-Fi", "cup.and.saucer.fill", "Lofi Beats Chill", Color.blue),
-        ("Bollywood & Punjabi", "sparkles", "Bollywood Hits", Color.pink),
-        ("Electronic / Dance", "bolt.fill", "EDM Dance Hits", Color.cyan),
-        ("Acoustic / Indie", "leaf.fill", "Indie Folk Acoustic", Color.green),
-        ("R&B / Soul", "heart.fill", "RnB Hits", Color.indigo)
+    private let genres: [GenreCategory] = [
+        GenreCategory(name: "Pop Hits", icon: "music.note", query: "Pop Hits", color: Color.purple),
+        GenreCategory(name: "Hip-Hop & Rap", icon: "flame.fill", query: "Hip Hop Hits", color: Color.orange),
+        GenreCategory(name: "Rock & Metal", icon: "guitars.fill", query: "Rock Hits", color: Color.red),
+        GenreCategory(name: "Chill & Lo-Fi", icon: "cup.and.saucer.fill", query: "Lofi Beats Chill", color: Color.blue),
+        GenreCategory(name: "Bollywood & Punjabi", icon: "sparkles", query: "Bollywood Hits", color: Color.pink),
+        GenreCategory(name: "Electronic / Dance", icon: "bolt.fill", query: "EDM Dance Hits", color: Color.cyan),
+        GenreCategory(name: "Acoustic / Indie", icon: "leaf.fill", query: "Indie Folk Acoustic", color: Color.green),
+        GenreCategory(name: "R&B / Soul", icon: "heart.fill", query: "RnB Hits", color: Color.indigo)
+    ]
+
+    private let gridColumns = [
+        GridItem(.flexible()),
+        GridItem(.flexible())
     ]
 
     var body: some View {
@@ -488,33 +566,10 @@ struct ExploreView: View {
                             .foregroundColor(HawkTheme.textPrimary)
                             .padding(.horizontal)
 
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                            ForEach(genres, id: \.0) { genre in
-                                NavigationLink(destination: GenreDetailView(title: genre.0, searchQuery: genre.2, accentColor: genre.3)) {
-                                    ZStack(alignment: .bottomLeading) {
-                                        LinearGradient(
-                                            colors: [genre.3.opacity(0.8), genre.3.opacity(0.4)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                        .frame(height: 100)
-                                        .cornerRadius(12)
-
-                                        HStack {
-                                            VStack(alignment: .leading) {
-                                                Spacer()
-                                                Text(genre.0)
-                                                    .font(.system(size: 16, weight: .bold))
-                                                    .foregroundColor(.white)
-                                                    .padding(12)
-                                            }
-                                            Spacer()
-                                            Image(systemName: genre.1)
-                                                .font(.system(size: 28))
-                                                .foregroundColor(.white.opacity(0.35))
-                                                .padding(12)
-                                        }
-                                    }
+                        LazyVGrid(columns: gridColumns, spacing: 14) {
+                            ForEach(genres) { genre in
+                                NavigationLink(destination: GenreDetailView(title: genre.name, searchQuery: genre.query, accentColor: genre.color)) {
+                                    GenreCardView(genre: genre)
                                 }
                             }
                         }
@@ -534,6 +589,12 @@ struct GenreDetailView: View {
     let title: String
     let searchQuery: String
     let accentColor: Color
+
+    init(title: String, searchQuery: String, accentColor: Color) {
+        self.title = title
+        self.searchQuery = searchQuery
+        self.accentColor = accentColor
+    }
 
     @State private var songs: [Song] = []
     @State private var isLoading = true
@@ -568,12 +629,13 @@ struct GenreDetailView: View {
     }
 }
 
-// MARK: - Live Search View
+// MARK: - Universal Federated Search View
 struct SearchView: View {
     @State private var query = ""
-    @State private var selectedSource = 0 // 0: All, 1: YouTube, 2: JioSaavn
-    @State private var results: [Song] = []
+    @State private var searchResults = UniversalSearchResults()
+    @State private var searchHistory: [String] = []
     @State private var isSearching = false
+    @State private var searchTask: Task<Void, Never>?
     private var coordinator = PlaybackCoordinator.shared
 
     var body: some View {
@@ -581,75 +643,230 @@ struct SearchView: View {
             ZStack {
                 HawkTheme.darkBackground.ignoresSafeArea()
                 VStack(spacing: 0) {
-                    Picker("Source", selection: $selectedSource) {
-                        Text("All").tag(0)
-                        Text("YouTube Music").tag(1)
-                        Text("JioSaavn (320k)").tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                    .padding(.bottom, 12)
-                    .onChange(of: selectedSource) { _, _ in
-                        triggerSearch(for: query)
-                    }
-
                     if isSearching {
                         Spacer()
                         ProgressView()
                             .tint(HawkTheme.primaryAccent)
                             .scaleEffect(1.2)
-                        Text("Searching...")
-                            .font(.caption)
+                        Text("Searching library, downloads & streaming...")
+                            .font(HawkTypography.caption1)
                             .foregroundColor(HawkTheme.textSecondary)
                             .padding(.top, 8)
                         Spacer()
-                    } else if results.isEmpty && !query.isEmpty {
+                    } else if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                        // Empty query: Show Search History & Suggestions
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: HawkSpacing.lg) {
+                                if !searchHistory.isEmpty {
+                                    VStack(alignment: .leading, spacing: HawkSpacing.sm) {
+                                        HStack {
+                                            Text("Recent Searches")
+                                                .font(HawkTypography.headline)
+                                                .foregroundColor(HawkTheme.textPrimary)
+                                            Spacer()
+                                            Button("Clear") {
+                                                Task {
+                                                    await UniversalSearchEngine.shared.clearSearchHistory()
+                                                    searchHistory = []
+                                                }
+                                            }
+                                            .font(HawkTypography.subheadline)
+                                            .foregroundColor(HawkTheme.primaryAccent)
+                                        }
+                                        .padding(.horizontal, HawkSpacing.md)
+
+                                        LazyVStack(spacing: 0) {
+                                            ForEach(searchHistory, id: \.self) { pastQuery in
+                                                Button {
+                                                    query = pastQuery
+                                                    triggerSearch(for: pastQuery)
+                                                } label: {
+                                                    HStack(spacing: HawkSpacing.sm) {
+                                                        Image(systemName: "clock.arrow.circlepath")
+                                                            .font(.system(size: 15))
+                                                            .foregroundColor(HawkTheme.textTertiary)
+
+                                                        Text(pastQuery)
+                                                            .font(HawkTypography.body)
+                                                            .foregroundColor(HawkTheme.textPrimary)
+
+                                                        Spacer()
+
+                                                        Image(systemName: "arrow.up.left")
+                                                            .font(.system(size: 13))
+                                                            .foregroundColor(HawkTheme.textTertiary)
+                                                    }
+                                                    .padding(.horizontal, HawkSpacing.md)
+                                                    .padding(.vertical, 12)
+                                                }
+                                                .buttonStyle(.plain)
+
+                                                Divider()
+                                                    .background(HawkTheme.dividerColor)
+                                                    .padding(.leading, 44)
+                                            }
+                                        }
+                                        .background(HawkTheme.cardBackground)
+                                        .clipShape(RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous))
+                                        .padding(.horizontal, HawkSpacing.md)
+                                    }
+                                }
+
+                                // Search Suggestions Section
+                                VStack(alignment: .leading, spacing: HawkSpacing.sm) {
+                                    Text("Explore Searches")
+                                        .font(HawkTypography.headline)
+                                        .foregroundColor(HawkTheme.textPrimary)
+                                        .padding(.horizontal, HawkSpacing.md)
+
+                                    let suggestions = ["The Weeknd", "Arijit Singh", "Ed Sheeran", "Top Hits 2026", "Lofi Beats", "Bollywood Romantic"]
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: HawkSpacing.xs) {
+                                            ForEach(suggestions, id: \.self) { sug in
+                                                Button {
+                                                    query = sug
+                                                    triggerSearch(for: sug)
+                                                } label: {
+                                                    Text(sug)
+                                                        .font(HawkTypography.subheadline)
+                                                        .foregroundColor(HawkTheme.textPrimary)
+                                                        .padding(.horizontal, 14)
+                                                        .padding(.vertical, 8)
+                                                        .background(HawkTheme.cardBackground)
+                                                        .clipShape(Capsule())
+                                                        .overlay(Capsule().stroke(HawkTheme.dividerColor, lineWidth: 0.8))
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                        .padding(.horizontal, HawkSpacing.md)
+                                    }
+                                }
+                            }
+                            .padding(.top, HawkSpacing.md)
+                            .padding(.bottom, 110)
+                        }
+                    } else if searchResults.isEmpty {
                         Spacer()
                         VStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 40))
                                 .foregroundColor(HawkTheme.textTertiary)
                             Text("No tracks found for '\(query)'")
-                                .font(.subheadline)
+                                .font(HawkTypography.subheadline)
                                 .foregroundColor(HawkTheme.textSecondary)
-                        }
-                        Spacer()
-                    } else if results.isEmpty {
-                        Spacer()
-                        VStack(spacing: 8) {
-                            Image(systemName: "music.note")
-                                .font(.system(size: 44))
-                                .foregroundColor(HawkTheme.textTertiary)
-                            Text("Search songs, artists, or albums")
-                                .font(.headline)
-                                .foregroundColor(HawkTheme.textSecondary)
-                            Text("Type to search live across YouTube Music and JioSaavn")
-                                .font(.caption)
-                                .foregroundColor(HawkTheme.textTertiary)
                         }
                         Spacer()
                     } else {
-                        List(results) { song in
-                            Button {
-                                coordinator.play(song: song, context: results)
-                            } label: {
-                                SongRowView(song: song)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button {
-                                    Task {
-                                        _ = await PlaylistStore.shared.toggleFavorite(song: song)
+                        // Categorized Search Results
+                        List {
+                            // Section: Top Result
+                            if let top = searchResults.topResult {
+                                Section(header: Text("TOP RESULT").font(HawkTypography.caption1.weight(.bold)).foregroundColor(HawkTheme.textTertiary)) {
+                                    Button {
+                                        coordinator.play(song: top, context: [top] + searchResults.streamingMatches)
+                                    } label: {
+                                        HStack(spacing: HawkSpacing.md) {
+                                            HawkArtwork(url: top.artworkURL, size: 64, cornerRadius: HawkRadius.md)
+
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(top.title)
+                                                    .font(HawkTypography.headline)
+                                                    .foregroundColor(HawkTheme.textPrimary)
+                                                    .lineLimit(1)
+                                                Text("\(top.artist) • Song")
+                                                    .font(HawkTypography.subheadline)
+                                                    .foregroundColor(HawkTheme.textSecondary)
+                                                    .lineLimit(1)
+                                            }
+                                            Spacer()
+                                            Image(systemName: "play.circle.fill")
+                                                .font(.system(size: 32))
+                                                .foregroundColor(HawkTheme.primaryAccent)
+                                        }
+                                        .padding(.vertical, 4)
                                     }
-                                } label: {
-                                    Label("Add to Favorites", systemImage: "heart")
+                                    .buttonStyle(.plain)
+                                    .hawkSongContextMenu(song: top)
                                 }
-                                Button {
-                                    coordinator.play(song: song, context: results)
-                                } label: {
-                                    Label("Play Immediately", systemImage: "play")
+                                .listRowBackground(HawkTheme.cardBackground)
+                            }
+
+                            // Section: Library Matches
+                            if !searchResults.libraryMatches.isEmpty {
+                                Section(header: Text("FROM YOUR LIBRARY").font(HawkTypography.caption1.weight(.bold)).foregroundColor(HawkTheme.textTertiary)) {
+                                    ForEach(searchResults.libraryMatches.prefix(5)) { song in
+                                        Button {
+                                            coordinator.play(song: song, context: searchResults.libraryMatches)
+                                        } label: {
+                                            SongRowView(song: song)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .hawkSongContextMenu(song: song)
+                                    }
                                 }
+                                .listRowBackground(HawkTheme.cardBackground)
+                            }
+
+                            // Section: Playlists Matches
+                            if !searchResults.playlistMatches.isEmpty {
+                                Section(header: Text("PLAYLISTS").font(HawkTypography.caption1.weight(.bold)).foregroundColor(HawkTheme.textTertiary)) {
+                                    ForEach(searchResults.playlistMatches) { playlist in
+                                        NavigationLink(destination: PlaylistDetailView(playlist: playlist)) {
+                                            HStack(spacing: HawkSpacing.md) {
+                                                ZStack {
+                                                    RoundedRectangle(cornerRadius: HawkRadius.sm, style: .continuous)
+                                                        .fill(HawkTheme.secondarySurface)
+                                                        .frame(width: 44, height: 44)
+                                                    Image(systemName: "music.note.list")
+                                                        .foregroundColor(HawkLibraryStyle.iconTint)
+                                                }
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(playlist.title)
+                                                        .font(HawkTypography.body.weight(.medium))
+                                                        .foregroundColor(HawkTheme.textPrimary)
+                                                    Text("\(playlist.songs.count) songs")
+                                                        .font(HawkTypography.caption1)
+                                                        .foregroundColor(HawkTheme.textSecondary)
+                                                }
+                                            }
+                                            .padding(.vertical, 2)
+                                        }
+                                    }
+                                }
+                                .listRowBackground(HawkTheme.cardBackground)
+                            }
+
+                            // Section: Downloaded Tracks
+                            if !searchResults.downloadMatches.isEmpty {
+                                Section(header: Text("DOWNLOADED (OFFLINE)").font(HawkTypography.caption1.weight(.bold)).foregroundColor(HawkTheme.textTertiary)) {
+                                    ForEach(searchResults.downloadMatches.prefix(5)) { song in
+                                        Button {
+                                            coordinator.play(song: song, context: searchResults.downloadMatches)
+                                        } label: {
+                                            SongRowView(song: song)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .hawkSongContextMenu(song: song)
+                                    }
+                                }
+                                .listRowBackground(HawkTheme.cardBackground)
+                            }
+
+                            // Section: Global Streaming Results
+                            if !searchResults.streamingMatches.isEmpty {
+                                Section(header: Text("STREAMING & WEB").font(HawkTypography.caption1.weight(.bold)).foregroundColor(HawkTheme.textTertiary)) {
+                                    ForEach(searchResults.streamingMatches) { song in
+                                        Button {
+                                            coordinator.play(song: song, context: searchResults.streamingMatches)
+                                        } label: {
+                                            SongRowView(song: song)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .hawkSongContextMenu(song: song)
+                                    }
+                                }
+                                .listRowBackground(HawkTheme.cardBackground)
                             }
                         }
                         .scrollContentBackground(.hidden)
@@ -658,41 +875,37 @@ struct SearchView: View {
                 }
             }
             .navigationTitle("Search")
-            .searchable(text: $query, prompt: "Songs, Artists, Albums...")
+            .searchable(text: $query, prompt: "Songs, Artists, Albums, Playlists...")
             .onChange(of: query) { _, newQuery in
                 triggerSearch(for: newQuery)
+            }
+            .task {
+                searchHistory = await UniversalSearchEngine.shared.getSearchHistory()
             }
         }
     }
 
     private func triggerSearch(for text: String) {
+        searchTask?.cancel()
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else {
-            results = []
+            searchResults = UniversalSearchResults()
             isSearching = false
             return
         }
 
         isSearching = true
-        Task {
-            try? await Task.sleep(nanoseconds: 350_000_000) // 350ms debounce
+        searchTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms debounce
+            if Task.isCancelled { return }
             guard clean == self.query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
 
-            var fetched: [Song] = []
-            switch selectedSource {
-            case 1:
-                fetched = (try? await YouTubeSource().search(query: clean)) ?? []
-            case 2:
-                fetched = (try? await JioSaavnSource().search(query: clean)) ?? []
-            default:
-                async let saavn = (try? JioSaavnSource().search(query: clean)) ?? []
-                async let yt = (try? YouTubeSource().search(query: clean)) ?? []
-                let (rSaavn, rYt) = await (saavn, yt)
-                fetched = TrackDeduplicator.deduplicate(rSaavn + rYt)
+            let results = await UniversalSearchEngine.shared.search(query: clean)
+            if !Task.isCancelled {
+                self.searchResults = results
+                self.isSearching = false
+                self.searchHistory = await UniversalSearchEngine.shared.getSearchHistory()
             }
-
-            self.results = fetched
-            self.isSearching = false
         }
     }
 }
@@ -704,27 +917,8 @@ struct SongCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
-                if let url = song.artworkURL {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        default:
-                            cardPlaceholder
-                        }
-                    }
-                    .frame(width: 160, height: 160)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
-                    )
+                HawkArtwork(url: song.artworkURL, size: 160, cornerRadius: HawkRadius.lg)
                     .shadow(color: .black.opacity(0.28), radius: 8, y: 4)
-                } else {
-                    cardPlaceholder
-                }
 
                 // Mini Liquid Glass Play Accent
                 ZStack {
@@ -743,13 +937,13 @@ struct SongCardView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(HawkTypography.subheadline.weight(.semibold))
                     .foregroundColor(HawkTheme.textPrimary)
                     .lineLimit(1)
 
                 Text(song.artist)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(HawkTheme.textTertiary)
+                    .font(HawkTypography.caption1)
+                    .foregroundColor(HawkTheme.textSecondary)
                     .lineLimit(1)
             }
         }
@@ -782,19 +976,41 @@ struct SongCardView: View {
 // MARK: - Library Hub View
 struct LibraryView: View {
     @State private var recentLibrarySongs: [Song] = []
+    @State private var allLibrarySongs: [Song] = []
+    @State private var librarySearchText: String = ""
+    @State private var selectedFilter: LibraryFilter = .all
+    @State private var showCreatePlaylistSheet: Bool = false
+    @State private var newPlaylistName: String = ""
     private var coordinator = PlaybackCoordinator.shared
 
-    private let librarySections: [(title: String, icon: String, color: Color, destination: AnyView)] = [
-        ("Liked Songs", "heart.fill", HawkTheme.primaryAccent, AnyView(FavoritesView())),
-        ("Playlists", "music.note.list", HawkTheme.primaryAccent, AnyView(PlaylistsView())),
-        ("Albums", "square.stack", HawkTheme.secondaryAccent, AnyView(AlbumsView())),
-        ("Artists", "music.mic", HawkTheme.secondaryAccent, AnyView(ArtistsView())),
-        ("Recently Added", "clock.fill", HawkTheme.secondaryAccent, AnyView(RecentlyAddedView())),
-        ("Recently Played", "play.circle.fill", HawkTheme.primaryAccent, AnyView(RecentlyPlayedView())),
-        ("All Songs", "music.note", HawkTheme.secondaryAccent, AnyView(AllSongsView())),
-        ("Downloaded", "arrow.down.circle.fill", HawkTheme.primaryAccent, AnyView(DownloadsView())),
-        ("Local Files", "folder.fill", HawkTheme.secondaryAccent, AnyView(LocalFilesView()))
+    enum LibraryFilter: String, CaseIterable, Identifiable {
+        case all = "All"
+        case downloaded = "Downloaded"
+        case youtube = "YouTube"
+        case local = "Local"
+
+        var id: String { rawValue }
+    }
+
+    private let librarySections: [(title: String, icon: String, destination: AnyView)] = [
+        ("Liked Songs", "heart.fill", AnyView(FavoritesView())),
+        ("Playlists", "music.note.list", AnyView(PlaylistsView())),
+        ("Albums", "square.stack", AnyView(AlbumsView())),
+        ("Artists", "music.mic", AnyView(ArtistsView())),
+        ("Songs", "music.note", AnyView(AllSongsView())),
+        ("Downloads", "arrow.down.circle.fill", AnyView(DownloadsView())),
+        ("Recently Played", "clock.fill", AnyView(RecentlyPlayedView())),
+        ("Local Music", "folder.fill", AnyView(LocalFilesView())),
+        ("YouTube Music Imports", "play.rectangle.fill", AnyView(YouTubeMusicImportsView()))
     ]
+
+    private var filteredSearchSongs: [Song] {
+        guard !librarySearchText.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        return allLibrarySongs.filter {
+            $0.title.localizedCaseInsensitiveContains(librarySearchText) ||
+            $0.artist.localizedCaseInsensitiveContains(librarySearchText)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -802,65 +1018,120 @@ struct LibraryView: View {
                 HawkTheme.darkBackground.ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 20) {
-                        // Section: Navigation List
-                        VStack(spacing: 1) {
-                            ForEach(librarySections, id: \.title) { sec in
-                                NavigationLink(destination: sec.destination) {
-                                    HStack(spacing: 14) {
-                                        Image(systemName: sec.icon)
-                                            .font(.system(size: 18, weight: .semibold))
-                                            .foregroundColor(sec.color)
-                                            .frame(width: 28, height: 28)
+                    VStack(alignment: .leading, spacing: HawkSpacing.lg) {
+                        // In-Library Search Field
+                        HawkSearchField(
+                            text: $librarySearchText,
+                            placeholder: "Search within library..."
+                        )
+                        .padding(.horizontal, HawkSpacing.md)
+                        .padding(.top, HawkSpacing.xs)
 
-                                        Text(sec.title)
-                                            .font(.system(size: 17, weight: .regular))
-                                            .foregroundColor(HawkTheme.textPrimary)
+                        if !librarySearchText.isEmpty {
+                            // Search Results within Library
+                            VStack(alignment: .leading, spacing: HawkSpacing.xs) {
+                                Text("Matching Library Songs (\(filteredSearchSongs.count))")
+                                    .font(HawkTypography.subheadline.weight(.semibold))
+                                    .foregroundColor(HawkTheme.textSecondary)
+                                    .padding(.horizontal, HawkSpacing.md)
 
-                                        Spacer()
-
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(HawkTheme.textTertiary)
-                                    }
-                                    .padding(.horizontal, 20)
-                                    .padding(.vertical, 12)
-                                }
-                                .buttonStyle(.plain)
-
-                                if sec.title != librarySections.last?.title {
-                                    Divider()
-                                        .background(Color.white.opacity(0.08))
-                                        .padding(.leading, 62)
-                                }
-                            }
-                        }
-                        .background(HawkTheme.cardBackground)
-                        .cornerRadius(16)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 4)
-
-                        // Section: Recently Added 1:1 Artwork Carousel
-                        if !recentLibrarySongs.isEmpty {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text("Recently Added")
-                                    .font(.system(size: 22, weight: .bold))
-                                    .foregroundColor(HawkTheme.textPrimary)
-                                    .padding(.horizontal, 20)
-
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 16) {
-                                        ForEach(recentLibrarySongs.prefix(10)) { song in
+                                if filteredSearchSongs.isEmpty {
+                                    Text("No matching songs found in your library.")
+                                        .font(HawkTypography.footnote)
+                                        .foregroundColor(HawkTheme.textTertiary)
+                                        .padding(.horizontal, HawkSpacing.md)
+                                        .padding(.vertical, HawkSpacing.md)
+                                } else {
+                                    VStack(spacing: 0) {
+                                        ForEach(filteredSearchSongs.prefix(15)) { song in
                                             Button {
-                                                coordinator.play(song: song, context: recentLibrarySongs)
+                                                coordinator.play(song: song, context: filteredSearchSongs)
                                             } label: {
-                                                SongCardView(song: song)
+                                                SongRowView(song: song)
+                                                    .padding(.horizontal, HawkSpacing.md)
+                                                    .padding(.vertical, 6)
                                             }
                                             .buttonStyle(.plain)
-                                            .hawkPressEffect()
+
+                                            Divider()
+                                                .background(HawkTheme.dividerColor)
+                                                .padding(.leading, 70)
                                         }
                                     }
-                                    .padding(.horizontal, 20)
+                                    .background(HawkTheme.cardBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous))
+                                    .padding(.horizontal, HawkSpacing.md)
+                                }
+                            }
+                        } else {
+                            // Monochromatic Category Navigation List
+                            VStack(spacing: 0) {
+                                ForEach(Array(librarySections.enumerated()), id: \.offset) { index, sec in
+                                    NavigationLink(destination: sec.destination) {
+                                        HStack(spacing: HawkSpacing.md) {
+                                            // Unified monochromatic tile
+                                            ZStack {
+                                                RoundedRectangle(cornerRadius: HawkRadius.sm, style: .continuous)
+                                                    .fill(HawkTheme.secondarySurface)
+                                                    .frame(width: 32, height: 32)
+
+                                                Image(systemName: sec.icon)
+                                                    .font(.system(size: 15, weight: .semibold))
+                                                    .foregroundColor(HawkLibraryStyle.iconTint)
+                                            }
+
+                                            Text(sec.title)
+                                                .font(HawkTypography.body.weight(.medium))
+                                                .foregroundColor(HawkTheme.textPrimary)
+
+                                            Spacer()
+
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 13, weight: .semibold))
+                                                .foregroundColor(HawkTheme.textTertiary)
+                                        }
+                                        .padding(.horizontal, HawkSpacing.md)
+                                        .padding(.vertical, 11)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    if index < librarySections.count - 1 {
+                                        Divider()
+                                            .background(HawkTheme.dividerColor)
+                                            .padding(.leading, 60)
+                                    }
+                                }
+                            }
+                            .background(HawkTheme.cardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: HawkRadius.lg, style: .continuous)
+                                    .stroke(HawkTheme.dividerColor, lineWidth: 0.8)
+                            )
+                            .padding(.horizontal, HawkSpacing.md)
+
+                            // Recently Added 1:1 Artwork Carousel
+                            if !recentLibrarySongs.isEmpty {
+                                VStack(alignment: .leading, spacing: HawkSpacing.sm) {
+                                    Text("Recently Added")
+                                        .font(HawkTypography.title3)
+                                        .foregroundColor(HawkTheme.textPrimary)
+                                        .padding(.horizontal, HawkSpacing.md)
+
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: HawkSpacing.md) {
+                                            ForEach(recentLibrarySongs.prefix(10)) { song in
+                                                Button {
+                                                    coordinator.play(song: song, context: recentLibrarySongs)
+                                                } label: {
+                                                    SongCardView(song: song)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .hawkPressEffect()
+                                            }
+                                        }
+                                        .padding(.horizontal, HawkSpacing.md)
+                                    }
                                 }
                             }
                         }
@@ -871,14 +1142,64 @@ struct LibraryView: View {
             .navigationTitle("Library")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    NavigationLink(destination: SettingsView()) {
-                        Image(systemName: "gearshape.fill")
-                            .foregroundColor(HawkTheme.primaryAccent)
+                    HStack(spacing: HawkSpacing.sm) {
+                        Button {
+                            showCreatePlaylistSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .foregroundColor(HawkTheme.primaryAccent)
+                        }
+
+                        NavigationLink(destination: SettingsView()) {
+                            Image(systemName: "gearshape.fill")
+                                .foregroundColor(HawkTheme.textSecondary)
+                        }
                     }
                 }
             }
+            .sheet(isPresented: $showCreatePlaylistSheet) {
+                NavigationStack {
+                    ZStack {
+                        HawkTheme.darkBackground.ignoresSafeArea()
+                        VStack(spacing: HawkSpacing.xl) {
+                            TextField("Playlist Name", text: $newPlaylistName)
+                                .font(HawkTypography.body)
+                                .padding()
+                                .background(HawkTheme.cardBackground)
+                                .cornerRadius(HawkRadius.md)
+                                .foregroundColor(HawkTheme.textPrimary)
+                                .padding(.horizontal)
+
+                            HStack(spacing: HawkSpacing.md) {
+                                HawkButton("Cancel", style: .secondary, size: .medium) {
+                                    showCreatePlaylistSheet = false
+                                    newPlaylistName = ""
+                                }
+
+                                HawkButton("Create", style: .primary, size: .medium) {
+                                    let name = newPlaylistName.trimmingCharacters(in: .whitespaces)
+                                    if !name.isEmpty {
+                                        Task {
+                                            _ = await PlaylistStore.shared.createPlaylist(title: name)
+                                            showCreatePlaylistSheet = false
+                                            newPlaylistName = ""
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+
+                            Spacer()
+                        }
+                        .padding(.top, HawkSpacing.xl)
+                    }
+                    .navigationTitle("New Playlist")
+                }
+                .presentationDetents([.height(260)])
+            }
             .task {
                 let all = await LibraryAggregator.shared.allLibrarySongs()
+                self.allLibrarySongs = all
                 self.recentLibrarySongs = all.sorted { ($0.dateAdded ?? .distantPast) > ($1.dateAdded ?? .distantPast) }
             }
         }

@@ -13,7 +13,10 @@ public actor LyricsEngine {
     private var defaultOffset: TimeInterval = 0
     private var rateLimitUntil: Date?
 
-    private let userAgent = "HAWK/1.4.0 (https://github.com/krtvysinghhhh/Hawk)"
+    private var userAgent: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.5.0"
+        return "HAWK/\(version) (https://github.com/krtvysinghhhh/Hawk)"
+    }
     private let negativeCacheTTL: TimeInterval = 600 // 10 minutes
 
     private var diskCacheDirectory: URL? {

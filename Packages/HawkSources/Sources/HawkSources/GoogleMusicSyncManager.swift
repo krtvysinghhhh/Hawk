@@ -19,6 +19,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     public private(set) var syncStatusMessage: String?
     public private(set) var syncedPlaylistsCount: Int = 0
     public private(set) var syncedSongsCount: Int = 0
+    public private(set) var syncProgress: Double = 0.0
+    private var isCancellationRequested: Bool = false
+    private var activeSyncTask: Task<Void, Never>?
 
     public var isAutoSyncEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "hawk_google_auto_sync") }
@@ -27,9 +30,11 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     private let keychain = KeychainStore.shared
     private let httpClient = HawkHttpClient.shared
+    private var inFlightRefreshTask: Task<String, Error>?
 
     // Google OAuth 2.0 configuration
     private let scopes = [
+        "openid",
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/youtube.readonly"
     ].joined(separator: " ")
@@ -174,7 +179,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     /// Derives standard Google iOS reversed Client ID scheme (RFC 8252) from Client ID.
     /// E.g. `123456-abc.apps.googleusercontent.com` -> `com.googleusercontent.apps.123456-abc`
-    public static func reversedScheme(for clientId: String) -> String {
+    nonisolated public static func reversedScheme(for clientId: String) -> String {
         let trimmed = clientId.trimmingCharacters(in: .whitespacesAndNewlines)
         let suffix = ".apps.googleusercontent.com"
         if trimmed.hasSuffix(suffix) {
@@ -185,13 +190,13 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     }
 
     /// Derives standard Google iOS OAuth 2.0 redirect URI from Client ID.
-    public static func redirectUri(for clientId: String) -> String {
+    nonisolated public static func redirectUri(for clientId: String) -> String {
         let scheme = reversedScheme(for: clientId)
         return "\(scheme):/oauth2callback"
     }
 
     /// Maps Google OAuth 2.0 error codes to user-friendly, actionable diagnostic guidance.
-    public static func mapOAuthError(code: String, description: String? = nil) -> String {
+    nonisolated public static func mapOAuthError(code: String, description: String? = nil) -> String {
         switch code.lowercased() {
         case "invalid_client":
             return "Google OAuth Client ID is invalid or not found in Google Cloud Console. Please configure an authorized iOS Client ID for bundle identifier 'com.hawk.music'."
@@ -202,7 +207,16 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         case "invalid_grant":
             return "Authorization code or refresh token has expired or been revoked (invalid_grant). Please sign in again."
         case "access_denied":
-            return "Google sign-in was cancelled or access was denied by the user."
+            if let desc = description, !desc.isEmpty {
+                if desc.localizedCaseInsensitiveContains("testing") ||
+                   desc.localizedCaseInsensitiveContains("verification") ||
+                   desc.localizedCaseInsensitiveContains("developer-approved") ||
+                   desc.localizedCaseInsensitiveContains("tester") {
+                    return "Google OAuth Access Blocked (403: access_denied): The app is in Google Cloud 'Testing' mode. Your Google account email must be added to 'Test users' in Google Cloud Console (APIs & Services → OAuth consent screen → Test users)."
+                }
+                return "Google sign-in access denied: \(desc)"
+            }
+            return "Google sign-in access was blocked or denied (403: access_denied). If your Google Cloud project is in 'Testing' mode, your email must be added to 'Test users' in Google Cloud Console (OAuth consent screen → Test users)."
         case "invalid_scope":
             return "Requested OAuth scope is invalid. Ensure YouTube Data API v3 and Google userinfo scopes are enabled in Google Cloud Console."
         case "unauthorized_client":
@@ -215,6 +229,249 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             }
             return "Google authentication failed (\(code)). Please try again."
         }
+    }
+
+    // MARK: - OpenID Connect (OIDC) ID Token Validation
+    public struct IdTokenClaims: Sendable, Equatable {
+        public let issuer: String
+        public let audience: String
+        public let subject: String
+        public let email: String?
+        public let emailVerified: Bool
+        public let nonce: String?
+        public let expiration: Date
+        public let issuedAt: Date
+
+        public init(
+            issuer: String,
+            audience: String,
+            subject: String,
+            email: String?,
+            emailVerified: Bool = false,
+            nonce: String? = nil,
+            expiration: Date,
+            issuedAt: Date
+        ) {
+            self.issuer = issuer
+            self.audience = audience
+            self.subject = subject
+            self.email = email
+            self.emailVerified = emailVerified
+            self.nonce = nonce
+            self.expiration = expiration
+            self.issuedAt = issuedAt
+        }
+    }
+
+    public enum IdTokenValidationError: Error, CustomStringConvertible, Sendable, Equatable {
+        case malformedJwt
+        case invalidBase64(String)
+        case invalidJson(String)
+        case missingKeyId
+        case unknownSigningKey(String)
+        case unsupportedAlgorithm(String)
+        case algorithmNoneRejected
+        case invalidSignature
+        case invalidIssuer(String)
+        case audienceMismatch(expected: String, actual: String)
+        case tokenExpired(expiration: Date, now: Date)
+        case tokenIssuedInFuture(issuedAt: Date, now: Date)
+        case missingSubject
+        case nonceMismatch(expected: String, actual: String?)
+        case networkError(String)
+        case invalidPublicKeyData
+
+        public var description: String {
+            switch self {
+            case .malformedJwt:
+                return "ID token does not have 3 segments (header.payload.signature)."
+            case .invalidBase64(let part):
+                return "Failed to decode base64url \(part) in ID token."
+            case .invalidJson(let part):
+                return "ID token \(part) is not valid JSON."
+            case .missingKeyId:
+                return "ID token header is missing required 'kid' (Key ID)."
+            case .unknownSigningKey(let kid):
+                return "Signing key '\(kid)' not found in Google JWKS."
+            case .unsupportedAlgorithm(let alg):
+                return "Unsupported JWT signing algorithm: '\(alg)'. Expected 'RS256'."
+            case .algorithmNoneRejected:
+                return "CRITICAL: JWT 'alg=none' rejected. Unsigned tokens are strictly prohibited."
+            case .invalidSignature:
+                return "CRITICAL: JWT RSA signature verification failed. Token is invalid or has been tampered with."
+            case .invalidIssuer(let iss):
+                return "Invalid ID token issuer: '\(iss)'. Expected 'accounts.google.com'."
+            case .audienceMismatch(let expected, let actual):
+                return "ID token audience mismatch: expected '\(expected)', got '\(actual)'."
+            case .tokenExpired(let exp, let now):
+                return "ID token has expired (exp: \(exp), now: \(now))."
+            case .tokenIssuedInFuture(let iat, let now):
+                return "ID token issued in the future (iat: \(iat), now: \(now))."
+            case .missingSubject:
+                return "ID token missing 'sub' claim."
+            case .nonceMismatch(let expected, let actual):
+                return "ID token nonce mismatch: expected '\(expected)', got '\(actual ?? "nil")'."
+            case .networkError(let msg):
+                return "Network error while resolving Google JWKS: \(msg)"
+            case .invalidPublicKeyData:
+                return "Failed to construct valid RSA public key from JWKS."
+            }
+        }
+    }
+
+    /// Cryptographically validates OIDC ID token signature against Google's JWKS and verifies claims.
+    ///
+    /// Critical security invariants:
+    /// 1. Enforces 3-part JWT structure.
+    /// 2. Header algorithm MUST be 'RS256'; explicitly rejects 'none' and algorithm confusion.
+    /// 3. Resolves signing key from Google's JWKS endpoint with automated rotation and safe caching.
+    /// 4. Cryptographically verifies RS256 signature over ASCII(header + "." + payload) using Apple Security framework.
+    /// 5. Validates signature BEFORE trusting or evaluating any claims.
+    /// 6. Validates issuer, audience, subject, expiration, issued-at, and nonce.
+    /// 7. Never trusts or extracts email claims from an unverified token.
+    nonisolated public static func validateIdToken(
+        rawToken: String,
+        expectedAudience: String,
+        expectedNonce: String? = nil,
+        now: Date = Date(),
+        jwksService: GoogleJwksService = GoogleJwksService.shared,
+        customKeyResolver: (@Sendable (String) async throws -> SendableSecKey?)? = nil
+    ) async -> Result<IdTokenClaims, IdTokenValidationError> {
+        let parts = rawToken.components(separatedBy: ".")
+        guard parts.count == 3 else {
+            return .failure(.malformedJwt)
+        }
+
+        // 1. Decode & validate Header
+        guard let headerData = base64UrlDecode(parts[0]),
+              let headerJson = try? JSONSerialization.jsonObject(with: headerData) as? [String: Any] else {
+            return .failure(.invalidBase64("header"))
+        }
+
+        guard let rawAlg = headerJson["alg"] as? String else {
+            return .failure(.unsupportedAlgorithm("missing"))
+        }
+        let alg = rawAlg.trimmingCharacters(in: .whitespacesAndNewlines)
+        if alg.lowercased() == "none" {
+            return .failure(.algorithmNoneRejected)
+        }
+        guard alg == "RS256" else {
+            return .failure(.unsupportedAlgorithm(alg))
+        }
+
+        guard let kid = headerJson["kid"] as? String, !kid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(.missingKeyId)
+        }
+
+        // 2. Resolve Public Key from JWKS
+        let publicKey: SecKey
+        do {
+            if let customResolver = customKeyResolver {
+                guard let sendableKey = try await customResolver(kid) else {
+                    return .failure(.unknownSigningKey(kid))
+                }
+                publicKey = sendableKey.rawKey
+            } else {
+                let sendableKey = try await jwksService.getKey(for: kid)
+                publicKey = sendableKey.rawKey
+            }
+        } catch let valErr as IdTokenValidationError {
+            return .failure(valErr)
+        } catch {
+            return .failure(.networkError(error.localizedDescription))
+        }
+
+        // 3. Decode Signature
+        guard let signatureData = base64UrlDecode(parts[2]), !signatureData.isEmpty else {
+            return .failure(.invalidSignature)
+        }
+
+        // 4. CRYPTOGRAPHICALLY VERIFY SIGNATURE BEFORE TRUSTING ANY CLAIMS
+        guard let signedData = "\(parts[0]).\(parts[1])".data(using: .ascii) else {
+            return .failure(.malformedJwt)
+        }
+
+        var secError: Unmanaged<CFError>?
+        let isSignatureValid = SecKeyVerifySignature(
+            publicKey,
+            .rsaSignatureMessagePKCS1v15SHA256,
+            signedData as CFData,
+            signatureData as CFData,
+            &secError
+        )
+
+        guard isSignatureValid else {
+            return .failure(.invalidSignature)
+        }
+
+        // 5. PARSE & VALIDATE CLAIMS (ONLY REACHED AFTER CRYPTOGRAPHIC SIGNATURE VERIFICATION)
+        guard let payloadData = base64UrlDecode(parts[1]),
+              let json = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            return .failure(.invalidJson("payload"))
+        }
+
+        guard let iss = json["iss"] as? String, (iss == "https://accounts.google.com" || iss == "accounts.google.com") else {
+            return .failure(.invalidIssuer(json["iss"] as? String ?? "missing"))
+        }
+
+        guard let aud = json["aud"] as? String, aud == expectedAudience else {
+            return .failure(.audienceMismatch(expected: expectedAudience, actual: json["aud"] as? String ?? "missing"))
+        }
+
+        guard let sub = json["sub"] as? String, !sub.isEmpty else {
+            return .failure(.missingSubject)
+        }
+
+        let expSec = (json["exp"] as? Double) ?? 0
+        let expDate = Date(timeIntervalSince1970: expSec)
+        if expDate.addingTimeInterval(60) <= now {
+            return .failure(.tokenExpired(expiration: expDate, now: now))
+        }
+
+        let iatSec = (json["iat"] as? Double) ?? 0
+        let iatDate = Date(timeIntervalSince1970: iatSec)
+        if iatDate > now.addingTimeInterval(300) {
+            return .failure(.tokenIssuedInFuture(issuedAt: iatDate, now: now))
+        }
+
+        if let expectedNonce = expectedNonce {
+            let tokenNonce = json["nonce"] as? String
+            guard let tokenNonce = tokenNonce, tokenNonce == expectedNonce else {
+                return .failure(.nonceMismatch(expected: expectedNonce, actual: tokenNonce))
+            }
+        }
+
+        let email = json["email"] as? String
+        let emailVerified = json["email_verified"] as? Bool ?? false
+        let nonce = json["nonce"] as? String
+
+        return .success(IdTokenClaims(
+            issuer: iss,
+            audience: aud,
+            subject: sub,
+            email: email,
+            emailVerified: emailVerified,
+            nonce: nonce,
+            expiration: expDate,
+            issuedAt: iatDate
+        ))
+    }
+
+    nonisolated public static func base64UrlEncode(_ data: Data) -> String {
+        return data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    nonisolated public static func base64UrlDecode(_ string: String) -> Data? {
+        var base64 = string
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 {
+            base64.append("=")
+        }
+        return Data(base64Encoded: base64)
     }
 
     public override init() {
@@ -257,7 +514,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
     // MARK: - OAuth 2.0 Callback Validation (Public for Testing)
     /// Validates an incoming OAuth 2.0 callback URL against state, redirect scheme, path, and error conditions.
-    public static func validateOAuthCallback(url: URL, expectedState: String, allowedScheme: String? = nil) throws -> String {
+    nonisolated public static func validateOAuthCallback(url: URL, expectedState: String, allowedScheme: String? = nil) throws -> String {
         guard let scheme = url.scheme?.lowercased() else {
             throw HawkError.authRequired("OAuth callback missing URL scheme")
         }
@@ -328,6 +585,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let challenge = Self.generateCodeChallenge(from: verifier)
         // Cryptographic state parameter to prevent CSRF / session fixation
         let stateToken = Self.generateStateToken()
+        // Cryptographic nonce parameter to prevent token replay attacks (OIDC Core 1.0)
+        let nonceToken = Self.generateNonce()
 
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         components.queryItems = [
@@ -338,6 +597,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: stateToken),
+            URLQueryItem(name: "nonce", value: nonceToken),
             URLQueryItem(name: "prompt", value: "select_account")
         ]
 
@@ -359,7 +619,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                     let nsError = error as NSError
                     if nsError.domain == ASWebAuthenticationSessionErrorDomain &&
                         nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                        continuation.resume(throwing: HawkError.authRequired("Google sign-in was cancelled by the user."))
+                        continuation.resume(throwing: HawkError.authRequired("Google sign-in was closed. If Google displayed 'Access blocked: Hawk IOS has not completed the Google verification process (403: access_denied)', add your signing-in Google email to 'Test users' in Google Cloud Console (OAuth consent screen → Test users)."))
                     } else {
                         continuation.resume(throwing: HawkError.authRequired(error.localizedDescription))
                     }
@@ -382,6 +642,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                             try await self.exchangeCodeForTokens(
                                 code: code,
                                 verifier: verifier,
+                                nonce: nonceToken,
                                 clientId: activeClientId,
                                 redirectUri: activeRedirectUri
                             )
@@ -436,7 +697,8 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         self.syncStatusMessage = nil
     }
 
-    /// Validates access token and transparently refreshes it via refresh_token if expired.
+    /// Validates access token and transparently refreshes it via refresh_token if expired,
+    /// coordinating concurrent requests to eliminate duplicate token refresh calls.
     public func getValidAccessToken() async throws -> String {
         guard let token = try? await keychain.readString(key: "google_access_token"), !token.isEmpty else {
             throw HawkError.authRequired("Not connected to Google")
@@ -451,10 +713,25 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             return token
         }
 
+        // Coordinate concurrent refresh operations
+        if let existingTask = inFlightRefreshTask {
+            return try await existingTask.value
+        }
+
+        let refreshTask = Task<String, Error> { @MainActor [weak self] in
+            guard let self = self else { throw HawkError.authRequired("Session deallocated") }
+            return try await self.performTokenRefresh(cachedToken: token, expiryTimestamp: expiryTimestamp, now: now)
+        }
+        self.inFlightRefreshTask = refreshTask
+        defer { self.inFlightRefreshTask = nil }
+        return try await refreshTask.value
+    }
+
+    private func performTokenRefresh(cachedToken: String, expiryTimestamp: Double, now: Double) async throws -> String {
         // Token is expired or expiring imminently -> refresh
         guard let refreshToken = try? await keychain.readString(key: "google_refresh_token"), !refreshToken.isEmpty else {
             if expiryTimestamp > now {
-                return token
+                return cachedToken
             }
             throw HawkError.authRequired("Google session expired. Please sign in again.")
         }
@@ -515,6 +792,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     private func exchangeCodeForTokens(
         code: String,
         verifier: String,
+        nonce: String? = nil,
         clientId: String? = nil,
         redirectUri: String? = nil
     ) async throws {
@@ -563,9 +841,31 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
 
         let refreshToken = json["refresh_token"] as? String
         let expiresIn = json["expires_in"] as? Double ?? 3600
-        let email = (try? await fetchGoogleUserEmail(accessToken: accessToken)) ?? "Google User"
+        var resolvedEmail = "Google User"
 
-        try await connectWithToken(email: email, accessToken: accessToken, refreshToken: refreshToken, expiresIn: expiresIn)
+        // 1. Prefer authenticated user email from cryptographically verified OIDC ID token
+        if let idToken = json["id_token"] as? String {
+            let validationResult = await Self.validateIdToken(
+                rawToken: idToken,
+                expectedAudience: activeClientId,
+                expectedNonce: nonce
+            )
+            switch validationResult {
+            case .success(let claims):
+                if let tokenEmail = claims.email, !tokenEmail.isEmpty {
+                    resolvedEmail = tokenEmail
+                }
+            case .failure(let valErr):
+                print("[GoogleOAuth] Cryptographic OIDC ID token verification rejected: \(valErr.description)")
+            }
+        }
+
+        // 2. Fall back to userinfo endpoint if ID token was absent or cryptographically rejected
+        if resolvedEmail == "Google User", let fetchedEmail = try? await fetchGoogleUserEmail(accessToken: accessToken) {
+            resolvedEmail = fetchedEmail
+        }
+
+        try await connectWithToken(email: resolvedEmail, accessToken: accessToken, refreshToken: refreshToken, expiresIn: expiresIn)
 
         if isAutoSyncEnabled {
             await syncNow()
@@ -587,13 +887,36 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
     }
 
     // MARK: - YouTube Music Library Synchronisation (Music-Only Scope & Robust Pagination)
+    public func cancelSync() {
+        isCancellationRequested = true
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+        isSyncing = false
+        syncProgress = 0.0
+        syncStatusMessage = "Sync cancelled by user."
+    }
+
+    /// Merges remote imported tracks into existing local tracks, deduplicating by canonicalKey and id,
+    /// preserving local user additions and track ordering.
+    nonisolated public static func mergeTracks(existing: [Song], incoming: [Song]) -> [Song] {
+        var merged = existing
+        for track in incoming {
+            if !merged.contains(where: { $0.canonicalKey == track.canonicalKey || $0.id == track.id }) {
+                merged.append(track)
+            }
+        }
+        return merged
+    }
+
     public func syncNow() async {
         guard isConnected else {
             syncStatusMessage = "Not connected to Google"
             return
         }
 
+        isCancellationRequested = false
         isSyncing = true
+        syncProgress = 0.05
         syncStatusMessage = "Syncing YouTube Music library..."
 
         let token: String
@@ -611,10 +934,20 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             var totalSyncedPlaylists = 0
             var totalSyncedSongs = 0
 
-            for p in playlists {
+            let totalSteps = max(playlists.count + 1, 1)
+
+            for (index, p) in playlists.enumerated() {
+                if isCancellationRequested || Task.isCancelled {
+                    throw CancellationError()
+                }
+
                 let tracks: [Song]
                 do {
                     tracks = try await fetchPlaylistMusicTracks(playlistId: p.id, accessToken: token)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let authErr as HawkError {
+                    throw authErr
                 } catch {
                     // Soft error handling: preserve sync if an individual playlist fails
                     continue
@@ -624,38 +957,143 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
                 // Check existing playlists to avoid duplication and preserve local user additions
                 let existing = await PlaylistStore.shared.getAllPlaylists()
                 if let match = existing.first(where: { $0.title == p.title }) {
-                    var merged = match.songs
-                    for t in tracks {
-                        if !merged.contains(where: { $0.canonicalKey == t.canonicalKey || $0.id == t.id }) {
-                            merged.append(t)
-                        }
-                    }
-                    _ = await PlaylistStore.shared.createPlaylist(title: match.title, initialSongs: merged)
+                    let merged = Self.mergeTracks(existing: match.songs, incoming: tracks)
+                    await PlaylistStore.shared.updatePlaylist(id: match.id, songs: merged)
                 } else {
                     _ = await PlaylistStore.shared.createPlaylist(title: p.title, initialSongs: tracks)
                 }
                 totalSyncedPlaylists += 1
                 totalSyncedSongs += tracks.count
+
+                self.syncProgress = Double(index + 1) / Double(totalSteps)
+                self.syncStatusMessage = "Synced \(totalSyncedPlaylists) playlists (\(p.title))..."
+            }
+
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
             }
 
             // 2. Fetch Liked Music Tracks (Strict Category: Music)
             let likedTracks = try await fetchLikedMusic(accessToken: token)
-            for track in likedTracks {
-                _ = await PlaylistStore.shared.addSong(to: Playlist.favoritesId, song: track)
-                totalSyncedSongs += 1
+            if !likedTracks.isEmpty {
+                let existing = await PlaylistStore.shared.getAllPlaylists()
+                if let match = existing.first(where: { $0.title == "YT Music: Liked Music" }) {
+                    let merged = Self.mergeTracks(existing: match.songs, incoming: likedTracks)
+                    await PlaylistStore.shared.updatePlaylist(id: match.id, songs: merged)
+                } else {
+                    _ = await PlaylistStore.shared.createPlaylist(title: "YT Music: Liked Music", initialSongs: likedTracks)
+                }
+                for track in likedTracks {
+                    if isCancellationRequested || Task.isCancelled { break }
+                    _ = await PlaylistStore.shared.addSong(to: Playlist.favoritesId, song: track)
+                    totalSyncedSongs += 1
+                }
             }
 
             self.syncedPlaylistsCount = totalSyncedPlaylists
             self.syncedSongsCount = totalSyncedSongs
+            self.syncProgress = 1.0
             self.lastSyncDate = Date()
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "hawk_google_last_sync_timestamp")
 
             self.syncStatusMessage = "Sync complete: \(totalSyncedPlaylists) playlists, \(totalSyncedSongs) tracks."
+        } catch is CancellationError {
+            self.syncStatusMessage = "Sync cancelled by user."
         } catch {
             self.syncStatusMessage = "Sync failed: \(error.localizedDescription)"
         }
 
         self.isSyncing = false
+    }
+
+    /// Retrieves all playlists imported from YouTube Music.
+    public func getYouTubeImportedPlaylists() async -> [Playlist] {
+        let all = await PlaylistStore.shared.getAllPlaylists()
+        return all.filter { playlist in
+            playlist.id != Playlist.favoritesId &&
+            (playlist.title.starts(with: "YT Music:") || playlist.songs.contains(where: { $0.sourceId == "youtube" }))
+        }
+    }
+
+    /// Parses YouTube Data API v3 `playlists.list?mine=true` JSON response.
+    nonisolated public static func parsePlaylistsResponse(data: Data) throws -> (playlists: [(id: String, title: String)], nextPageToken: String?) {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HawkError.decodeError("Invalid YouTube API JSON response")
+        }
+
+        let nextPageToken = json["nextPageToken"] as? String
+        guard let items = json["items"] as? [[String: Any]] else {
+            return ([], nextPageToken)
+        }
+
+        var playlists: [(id: String, title: String)] = []
+        for item in items {
+            guard let id = item["id"] as? String,
+                  let snippet = item["snippet"] as? [String: Any],
+                  let title = snippet["title"] as? String else { continue }
+            playlists.append((id: id, title: "YT Music: \(title)"))
+        }
+
+        return (playlists, nextPageToken)
+    }
+
+    /// Parses YouTube Data API v3 `playlistItems.list` JSON response.
+    /// Filters out deleted videos, private videos, and non-music items using multi-factor classification.
+    nonisolated public static func parsePlaylistTracksResponse(data: Data) throws -> (songs: [Song], nextPageToken: String?) {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HawkError.decodeError("Invalid YouTube API JSON response")
+        }
+
+        let nextPageToken = json["nextPageToken"] as? String
+        guard let items = json["items"] as? [[String: Any]] else {
+            return ([], nextPageToken)
+        }
+
+        var songs: [Song] = []
+        for item in items {
+            guard let snippet = item["snippet"] as? [String: Any],
+                  let title = snippet["title"] as? String,
+                  title != "Private video" && title != "Deleted video",
+                  let contentDetails = item["contentDetails"] as? [String: Any],
+                  let videoId = contentDetails["videoId"] as? String else { continue }
+
+            let channelTitle = snippet["videoOwnerChannelTitle"] as? String ?? snippet["channelTitle"] as? String ?? "Unknown Artist"
+            let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
+
+            // Multi-factor confidence classification: reject podcasts and non-music videos
+            let classificationResult = MusicClassificationService.classify(
+                title: title,
+                channelOrArtist: channelTitle,
+                duration: 210
+            )
+
+            guard classificationResult.classification.isPlayableSong else {
+                continue
+            }
+
+            var artworkURL: URL?
+            if let thumbs = snippet["thumbnails"] as? [String: Any] {
+                if let maxres = thumbs["maxres"] as? [String: Any], let urlStr = maxres["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let high = thumbs["high"] as? [String: Any], let urlStr = high["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let standard = thumbs["standard"] as? [String: Any], let urlStr = standard["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                }
+            }
+
+            let song = Song(
+                id: videoId,
+                title: title,
+                artist: artist,
+                duration: 210,
+                artworkURL: artworkURL,
+                sourceId: "youtube"
+            )
+            songs.append(song)
+        }
+
+        return (songs, nextPageToken)
     }
 
     private func fetchUserMusicPlaylists(accessToken: String) async throws -> [(id: String, title: String)] {
@@ -665,6 +1103,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let maxPages = 5 // Fetch up to 250 playlists
 
         repeat {
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
+            }
             pageCount += 1
             var urlString = "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50"
             if let token = nextPageToken {
@@ -678,31 +1119,35 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { break }
 
+            if http.statusCode == 401 {
+                throw HawkError.authRequired("Google access token expired or invalid (HTTP 401).")
+            }
+
             if http.statusCode == 403 {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 if let errorObj = json?["error"] as? [String: Any],
                    let errors = errorObj["errors"] as? [[String: Any]],
-                   let reason = errors.first?["reason"] as? String,
-                   reason == "quotaExceeded" || reason == "rateLimitExceeded" {
-                    throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                   let reason = errors.first?["reason"] as? String {
+                    if reason == "quotaExceeded" || reason == "rateLimitExceeded" {
+                        throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                    } else {
+                        let msg = errorObj["message"] as? String ?? reason
+                        throw HawkError.authRequired("YouTube API access forbidden (HTTP 403: \(msg)).")
+                    }
                 }
-                break
+                throw HawkError.authRequired("YouTube API access forbidden (HTTP 403).")
             }
 
-            guard (200...299).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let items = json["items"] as? [[String: Any]] else {
-                break
+            guard (200...299).contains(http.statusCode) else { break }
+
+            let parsed = try Self.parsePlaylistsResponse(data: data)
+            for p in parsed.playlists {
+                if !playlists.contains(where: { $0.id == p.id }) {
+                    playlists.append(p)
+                }
             }
 
-            for item in items {
-                guard let id = item["id"] as? String,
-                      let snippet = item["snippet"] as? [String: Any],
-                      let title = snippet["title"] as? String else { continue }
-                playlists.append((id: id, title: "YT Music: \(title)"))
-            }
-
-            nextPageToken = json["nextPageToken"] as? String
+            nextPageToken = parsed.nextPageToken
         } while nextPageToken != nil && pageCount < maxPages
 
         return playlists
@@ -715,6 +1160,9 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let maxPages = 5 // Fetch up to 250 tracks per playlist
 
         repeat {
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
+            }
             pageCount += 1
             var urlString = "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=\(playlistId)&maxResults=50"
             if let token = nextPageToken {
@@ -728,66 +1176,134 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { break }
 
+            if http.statusCode == 401 {
+                throw HawkError.authRequired("Google access token expired or invalid (HTTP 401).")
+            }
+
             if http.statusCode == 403 {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 if let errorObj = json?["error"] as? [String: Any],
                    let errors = errorObj["errors"] as? [[String: Any]],
-                   let reason = errors.first?["reason"] as? String,
-                   reason == "quotaExceeded" || reason == "rateLimitExceeded" {
-                    throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                   let reason = errors.first?["reason"] as? String {
+                    if reason == "quotaExceeded" || reason == "rateLimitExceeded" {
+                        throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                    } else {
+                        let msg = errorObj["message"] as? String ?? reason
+                        throw HawkError.authRequired("YouTube API access forbidden (HTTP 403: \(msg)).")
+                    }
                 }
-                break
+                throw HawkError.authRequired("YouTube API access forbidden (HTTP 403).")
             }
 
-            guard (200...299).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let items = json["items"] as? [[String: Any]] else {
-                break
+            guard (200...299).contains(http.statusCode) else { break }
+
+            let parsed = try Self.parsePlaylistTracksResponse(data: data)
+            for track in parsed.songs {
+                if !songs.contains(where: { $0.canonicalKey == track.canonicalKey || $0.id == track.id }) {
+                    songs.append(track)
+                }
             }
 
-            for item in items {
-                guard let snippet = item["snippet"] as? [String: Any],
-                      let title = snippet["title"] as? String,
-                      title != "Private video" && title != "Deleted video",
-                      let contentDetails = item["contentDetails"] as? [String: Any],
-                      let videoId = contentDetails["videoId"] as? String else { continue }
-
-                let channelTitle = snippet["videoOwnerChannelTitle"] as? String ?? snippet["channelTitle"] as? String ?? "Unknown Artist"
-                let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
-
-                // Multi-factor confidence classification: reject podcasts and non-music videos
-                let classificationResult = MusicClassificationService.classify(
-                    title: title,
-                    channelOrArtist: channelTitle,
-                    duration: 210
-                )
-
-                guard classificationResult.classification.isPlayableSong else {
-                    continue
-                }
-
-                var artworkURL: URL?
-                if let thumbs = snippet["thumbnails"] as? [String: Any],
-                   let high = thumbs["high"] as? [String: Any],
-                   let urlStr = high["url"] as? String {
-                    artworkURL = URL(string: urlStr)
-                }
-
-                let song = Song(
-                    id: videoId,
-                    title: title,
-                    artist: artist,
-                    duration: 210,
-                    artworkURL: artworkURL,
-                    sourceId: "youtube"
-                )
-                songs.append(song)
-            }
-
-            nextPageToken = json["nextPageToken"] as? String
+            nextPageToken = parsed.nextPageToken
         } while nextPageToken != nil && pageCount < maxPages
 
         return songs
+    }
+
+    // MARK: - ISO 8601 Duration Parser
+    nonisolated public static func parseISO8601Duration(_ text: String) -> TimeInterval {
+        // Formats: "PT4M13S", "PT1H2M10S", "PT45S", "PT1H"
+        var str = text
+        guard str.hasPrefix("PT") else { return 0 }
+        str.removeFirst(2)
+
+        var hours: Double = 0
+        var minutes: Double = 0
+        var seconds: Double = 0
+
+        if let hRange = str.range(of: "H") {
+            let hStr = String(str[..<hRange.lowerBound])
+            hours = Double(hStr) ?? 0
+            str = String(str[hRange.upperBound...])
+        }
+        if let mRange = str.range(of: "M") {
+            let mStr = String(str[..<mRange.lowerBound])
+            minutes = Double(mStr) ?? 0
+            str = String(str[mRange.upperBound...])
+        }
+        if let sRange = str.range(of: "S") {
+            let sStr = String(str[..<sRange.lowerBound])
+            seconds = Double(sStr) ?? 0
+        }
+
+        return hours * 3600 + minutes * 60 + seconds
+    }
+
+    /// Parses YouTube Data API v3 `videos.list?myRating=like` JSON response.
+    /// Filters out non-music category videos (YouTube category 10 is Music), podcasts, gaming, sound effects, and deleted items.
+    nonisolated public static func parseLikedVideosResponse(data: Data) throws -> (songs: [Song], nextPageToken: String?) {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw HawkError.decodeError("Invalid YouTube API JSON response")
+        }
+
+        let nextPageToken = json["nextPageToken"] as? String
+        guard let items = json["items"] as? [[String: Any]] else {
+            return ([], nextPageToken)
+        }
+
+        var songs: [Song] = []
+        for item in items {
+            guard let id = item["id"] as? String,
+                  let snippet = item["snippet"] as? [String: Any],
+                  let title = snippet["title"] as? String,
+                  title != "Private video" && title != "Deleted video" else { continue }
+
+            let channelTitle = snippet["videoOwnerChannelTitle"] as? String ?? snippet["channelTitle"] as? String ?? "Unknown Artist"
+            let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
+            let categoryId = snippet["categoryId"] as? String
+
+            var duration: TimeInterval = 210
+            if let contentDetails = item["contentDetails"] as? [String: Any],
+               let durStr = contentDetails["duration"] as? String {
+                let parsed = parseISO8601Duration(durStr)
+                if parsed > 0 { duration = parsed }
+            }
+
+            // Strict classification: requires categoryId == "10" (Music) and checks non-music keywords
+            let classificationResult = MusicClassificationService.classify(
+                title: title,
+                channelOrArtist: channelTitle,
+                duration: duration,
+                categoryId: categoryId
+            )
+
+            guard classificationResult.classification.isPlayableSong else {
+                continue
+            }
+
+            var artworkURL: URL?
+            if let thumbs = snippet["thumbnails"] as? [String: Any] {
+                if let maxres = thumbs["maxres"] as? [String: Any], let urlStr = maxres["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let high = thumbs["high"] as? [String: Any], let urlStr = high["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                } else if let standard = thumbs["standard"] as? [String: Any], let urlStr = standard["url"] as? String {
+                    artworkURL = URL(string: urlStr)
+                }
+            }
+
+            let song = Song(
+                id: id,
+                title: title,
+                artist: artist,
+                duration: duration,
+                artworkURL: artworkURL,
+                sourceId: "youtube"
+            )
+            songs.append(song)
+        }
+
+        return (songs, nextPageToken)
     }
 
     private func fetchLikedMusic(accessToken: String) async throws -> [Song] {
@@ -797,8 +1313,13 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
         let maxPages = 5 // Fetch up to 250 liked songs
 
         repeat {
+            if isCancellationRequested || Task.isCancelled {
+                throw CancellationError()
+            }
             pageCount += 1
-            var urlString = "https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&myRating=like&videoCategoryId=10&maxResults=50"
+            // Official YouTube Data API v3: myRating=like returns all user liked videos.
+            // videoCategoryId is mutually exclusive with myRating in videos.list and cannot be passed in query params.
+            var urlString = "https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&myRating=like&maxResults=50"
             if let token = nextPageToken {
                 urlString += "&pageToken=\(token)"
             }
@@ -810,68 +1331,43 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { break }
 
+            if http.statusCode == 401 {
+                throw HawkError.authRequired("Google access token expired or invalid (HTTP 401).")
+            }
+
             if http.statusCode == 403 {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 if let errorObj = json?["error"] as? [String: Any],
                    let errors = errorObj["errors"] as? [[String: Any]],
-                   let reason = errors.first?["reason"] as? String,
-                   reason == "quotaExceeded" || reason == "rateLimitExceeded" {
-                    throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                   let reason = errors.first?["reason"] as? String {
+                    if reason == "quotaExceeded" || reason == "rateLimitExceeded" {
+                        throw HawkError.networkError("YouTube API daily quota exceeded (10,000 units/day). Sync will resume after quota resets.")
+                    } else {
+                        let msg = errorObj["message"] as? String ?? reason
+                        throw HawkError.authRequired("YouTube API access forbidden (HTTP 403: \(msg)).")
+                    }
                 }
+                throw HawkError.authRequired("YouTube API access forbidden (HTTP 403).")
+            }
+
+            guard (200...299).contains(http.statusCode) else {
                 break
             }
 
-            guard (200...299).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let items = json["items"] as? [[String: Any]] else {
-                break
-            }
-
-            for item in items {
-                guard let id = item["id"] as? String,
-                      let snippet = item["snippet"] as? [String: Any],
-                      let title = snippet["title"] as? String else { continue }
-
-                let channelTitle = snippet["channelTitle"] as? String ?? "Unknown Artist"
-                let artist = channelTitle.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespaces)
-
-                let classificationResult = MusicClassificationService.classify(
-                    title: title,
-                    channelOrArtist: channelTitle,
-                    duration: 210,
-                    categoryId: "10"
-                )
-
-                guard classificationResult.classification.isPlayableSong else {
-                    continue
+            let result = try Self.parseLikedVideosResponse(data: data)
+            for track in result.songs {
+                if !songs.contains(where: { $0.canonicalKey == track.canonicalKey || $0.id == track.id }) {
+                    songs.append(track)
                 }
-
-                var artworkURL: URL?
-                if let thumbs = snippet["thumbnails"] as? [String: Any],
-                   let high = thumbs["high"] as? [String: Any],
-                   let urlStr = high["url"] as? String {
-                    artworkURL = URL(string: urlStr)
-                }
-
-                let song = Song(
-                    id: id,
-                    title: title,
-                    artist: artist,
-                    duration: 210,
-                    artworkURL: artworkURL,
-                    sourceId: "youtube"
-                )
-                songs.append(song)
             }
-
-            nextPageToken = json["nextPageToken"] as? String
+            nextPageToken = result.nextPageToken
         } while nextPageToken != nil && pageCount < maxPages
 
         return songs
     }
 
-    // MARK: - PKCE Cryptography Helpers (RFC 7636)
-    public static func generateCodeVerifier() -> String {
+    // MARK: - PKCE & Cryptography Helpers (RFC 7636 & OIDC Core 1.0)
+    nonisolated public static func generateCodeVerifier() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         return Data(bytes).base64EncodedString()
@@ -880,7 +1376,7 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             .replacingOccurrences(of: "=", with: "")
     }
 
-    public static func generateCodeChallenge(from verifier: String) -> String {
+    nonisolated public static func generateCodeChallenge(from verifier: String) -> String {
         guard let data = verifier.data(using: .utf8) else { return verifier }
         let digest = CryptoUtils.sha256(data: data)
         return digest.base64EncodedString()
@@ -889,7 +1385,11 @@ public final class GoogleMusicSyncManager: NSObject, ASWebAuthenticationPresenta
             .replacingOccurrences(of: "=", with: "")
     }
 
-    public static func generateStateToken() -> String {
+    nonisolated public static func generateStateToken() -> String {
+        generateCodeVerifier()
+    }
+
+    nonisolated public static func generateNonce() -> String {
         generateCodeVerifier()
     }
 }
